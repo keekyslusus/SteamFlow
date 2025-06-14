@@ -1,0 +1,58 @@
+# .github/workflows/main.yml
+
+name: 'Build & Release Plugin'
+
+on:
+  # This allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+  # This runs the workflow on pushes to the main branch
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '.github/workflows/*' # Ignore changes to the workflow file itself
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    # This grants the job permission to create a release
+    permissions:
+      contents: write
+
+    env:
+      python_ver: 3.11 # Specify the Python version
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python ${{ env.python_ver }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.python_ver }}
+
+    - name: Get plugin version from plugin.json
+      id: version
+      uses: notiz-dev/github-action-json-property@release
+      with:
+        path: 'plugin.json'
+        prop_path: 'Version'
+
+    - name: Install dependencies into lib folder and zip the plugin
+      run: |
+        python -m pip install --upgrade pip
+        # Install requirements into the ./lib directory
+        pip install -r ./requirements.txt -t ./lib
+        # Create the zip file for release, excluding git files
+        zip -r Flow.Launcher.Plugin.SteamFlow.zip . -x '*.git*'
+
+    - name: Publish Release
+      if: success()
+      uses: softprops/action-gh-release@v1
+      with:
+        # The zip file to upload
+        files: 'Flow.Launcher.Plugin.SteamFlow.zip'
+        # The release will be tagged with "v" + the version from plugin.json (e.g., v1.0.0)
+        tag_name: "v${{steps.version.outputs.prop}}"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
