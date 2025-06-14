@@ -1,0 +1,12 @@
+{
+  "ID": "A7F3C4E16B8D4B5AB2D7139EEC8FA0B4",
+  "ActionKeyword": "steam",
+  "Name": "SteamFlow",
+  "Description": "Launch Steam games and search Steam store",
+  "Author": "keekys",
+  "Version": "1.0.0",
+  "Language": "python",
+  "Website": "https://github.com/keekyslusus/SteamFlow",
+  "IcoPath": "steam.png",
+  "ExecuteFileName": "main.py"
+}
