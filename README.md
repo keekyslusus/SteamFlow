@@ -5,8 +5,6 @@ search Steam store and launch games
 ## Features:
 - 🔍 Search and launch installed Steam games
 - 🛒 Search the Steam store and open game pages in the Steam client
-- 💾 Cache game icons locally
-- 🧹 Auto-cleanup outdated icons
 - 🎮 Launch games directly from Flow Launcher
 
 ## Installation:
