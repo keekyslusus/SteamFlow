@@ -7,5 +7,10 @@ search Steam store and launch games
 - 🛒 Search the Steam store and open game pages in the Steam client
 - 🎮 Launch games directly from Flow Launcher
 
+## TODO:
+- [ ] Regional pricing support
+- [ ] Show current number of active players
+- [ ] Async requests
+
 ## Installation:
 Unzip [archive](https://github.com/keekyslusus/SteamFlow/releases/latest) to `%appdata%\FlowLauncher\Plugins`
