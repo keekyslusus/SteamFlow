@@ -4,7 +4,7 @@
   "Name": "SteamFlow",
   "Description": "Launch Steam games and search Steam store",
   "Author": "keekys",
-  "Version": "1.0.0",
+  "Version": "1.0.1",
   "Language": "python",
   "Website": "https://github.com/keekyslusus/SteamFlow",
   "IcoPath": "steam.png",
