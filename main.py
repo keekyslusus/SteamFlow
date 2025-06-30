@@ -18,12 +18,6 @@ import threading
 import currency_util
 
 try:
-    from PIL import Image
-except ImportError:
-    print(json.dumps({"result": [{"Title": "Error: 'Pillow' library not found", "SubTitle": "Please run 'pip install Pillow' in your command prompt.", "IcoPath": "steam.png"}]}))
-    sys.exit()
-
-try:
     import vdf 
 except ImportError:
     print(json.dumps({"result": [{"Title": "Error: 'vdf' library not found", "SubTitle": "Please run 'pip install vdf' in your command prompt.", "IcoPath": "steam.png"}]}))
@@ -152,20 +146,10 @@ class SteamPlugin:
     
     def create_centered_icon(self, image_url, save_path):
         try:
+            # Просто сохраняем изображение как есть, без обработки
             with urllib.request.urlopen(image_url, timeout=5) as response:
-                img_data = response.read()
-
-            original_img = Image.open(BytesIO(img_data)).convert("RGBA")
-            
-            canvas_size = max(original_img.width, original_img.height)
-            canvas = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
-            
-            x_offset = (canvas_size - original_img.width) // 2
-            y_offset = (canvas_size - original_img.height) // 2
-            
-            canvas.paste(original_img, (x_offset, y_offset), original_img)
-            
-            canvas.save(save_path, "PNG")
+                with open(save_path, 'wb') as out_file:
+                    out_file.write(response.read())
             return True
         except Exception:
             return False
