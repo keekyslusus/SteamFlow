@@ -14,14 +14,10 @@ import urllib.request
 import subprocess
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import vdf
 
 import currency_util
-
-try:
-    import vdf 
-except ImportError:
-    print(json.dumps({"result": [{"Title": "Error: 'vdf' library not found", "SubTitle": "Please run 'pip install vdf' in your command prompt.", "IcoPath": "steam.png"}]}))
-    sys.exit()
 
 if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -34,27 +30,50 @@ except ImportError:
 class SteamPlugin:
     def __init__(self):
         self.steam_path = self.get_steam_path()
-        self.country_code = self.get_user_country_code()
+        self.country_code = self.load_cached_country_code()
         self.installed_games = {}
         self.last_update = 0
         self.update_installed_games()
         plugin_dir = os.path.dirname(__file__)
         self.cache_dir = os.path.join(plugin_dir, "img_cache")
+        self.country_cache_file = os.path.join(plugin_dir, "country_cache.json")
+        self.steam_icon_cache = os.path.join(self.steam_path, "appcache", "librarycache") if self.steam_path else None
         if not os.path.exists(self.cache_dir):
             os.makedirs(self.cache_dir)
-        self.cleanup_image_cache()
+        threading.Thread(target=self.cleanup_image_cache, daemon=True).start()
 
-    def get_user_country_code(self):
+    def load_cached_country_code(self):
+        plugin_dir = os.path.dirname(__file__)
+        cache_file = os.path.join(plugin_dir, "country_cache.json")
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, 'r') as f:
+                    cache_data = json.load(f)
+                    cache_time = cache_data.get('timestamp', 0)
+                    if time.time() - cache_time < 7 * 24 * 60 * 60:
+                        return cache_data.get('country_code', 'us')
+            except:
+                pass
+        
+        threading.Thread(target=self._update_country_code_async, daemon=True).start()
+        return 'us'
+
+    def _update_country_code_async(self):
         try:
             api_url = "http://ip-api.com/json/?fields=countryCode"
             with urllib.request.urlopen(api_url, timeout=2) as response:
                 data = json.loads(response.read().decode('utf-8'))
                 cc = data.get('countryCode', 'us').lower()
                 if cc in currency_util.CURRENCY_DATA:
-                    return cc
-        except Exception:
+                    self.country_code = cc
+                    cache_data = {
+                        'country_code': cc,
+                        'timestamp': time.time()
+                    }
+                    with open(self.country_cache_file, 'w') as f:
+                        json.dump(cache_data, f)
+        except:
             pass
-        return 'us'
 
     def cleanup_image_cache(self):
         if not os.path.isdir(self.cache_dir): return
@@ -131,7 +150,7 @@ class SteamPlugin:
             encoded_term = urllib.parse.quote(search_term)
             api_url = f"https://store.steampowered.com/api/storesearch/?term={encoded_term}&cc={self.country_code}&l=en"
             req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=5) as response:
+            with urllib.request.urlopen(req, timeout=3) as response:
                 data = json.loads(response.read().decode('utf-8'))
             games = []
             if 'items' in data:
@@ -144,27 +163,42 @@ class SteamPlugin:
             return games
         except Exception: return []
     
-    def create_centered_icon(self, image_url, save_path):
+    def get_local_game_icon(self, app_id):
+        if not self.steam_icon_cache or not os.path.exists(self.steam_icon_cache):
+            return "steam.png"
+        
+        for ext in ['.jpg', '.png']:
+            icon_file = os.path.join(self.steam_icon_cache, f"{app_id}_icon{ext}")
+            if os.path.exists(icon_file):
+                return icon_file
+        
+        for ext in ['.jpg', '.png']:
+            logo_file = os.path.join(self.steam_icon_cache, f"{app_id}_logo{ext}")
+            if os.path.exists(logo_file):
+                return logo_file
+        
+        return "steam.png"
+
+    def download_icon(self, image_url, save_path):
         try:
-            # Просто сохраняем изображение как есть, без обработки
-            with urllib.request.urlopen(image_url, timeout=5) as response:
+            with urllib.request.urlopen(image_url, timeout=2) as response:
                 with open(save_path, 'wb') as out_file:
                     out_file.write(response.read())
             return True
-        except Exception:
+        except:
             return False
 
     def get_current_players(self, app_id):
         if not app_id: return None
         try:
             api_url = f"https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid={app_id}"
-            with urllib.request.urlopen(api_url, timeout=2) as response:
+            with urllib.request.urlopen(api_url, timeout=1) as response:
                 data = json.loads(response.read().decode('utf-8'))
                 if data.get('response', {}).get('result') == 1:
                     return data['response'].get('player_count')
         except Exception: return None
 
-    def process_game_data(self, game_data, index, output_list):
+    def process_game_data(self, game_data):
         app_id = game_data.get('id')
         name = game_data.get('name')
         
@@ -175,7 +209,7 @@ class SteamPlugin:
             if os.path.exists(cached_icon_path):
                 icon_path = cached_icon_path
             else:
-                if self.create_centered_icon(image_url, cached_icon_path):
+                if self.download_icon(image_url, cached_icon_path):
                     icon_path = cached_icon_path
         
         player_count = self.get_current_players(app_id)
@@ -196,24 +230,20 @@ class SteamPlugin:
             formatted_price = currency_util.format_price(price_info['final'], self.country_code)
             price_str = f" | {formatted_price}"
             
-        result = {
+        return {
             "Title": f"🛒 {name}",
             "SubTitle": f"Open in Steam store{platform_str}{player_count_str}{price_str}",
             "IcoPath": icon_path,
             "JsonRPCAction": {"method": "open_steam_store_page", "parameters": [app_id]}
         }
-        
-        output_list[index] = result
 
     def query(self, search_term):
         self.update_installed_games()
         results = []
-        
         if not search_term:
             return [{"Title": "SteamFlow", "SubTitle": f"Found {len(self.installed_games)} installed games. Type to search...", "IcoPath": "steam.png"}]
         
         search_lower = search_term.lower()
-        
         matching_games = []
         for app_id, name in self.installed_games.items():
             if search_lower in name.lower():
@@ -221,32 +251,35 @@ class SteamPlugin:
         matching_games.sort(key=lambda x: (x[1].lower().find(search_lower), len(x[1])))
         
         for app_id, name in matching_games[:5]:
+            local_icon = self.get_local_game_icon(app_id)
             results.append({
                 "Title": f"🎮 {name}",
                 "SubTitle": f"Launch installed game (ID: {app_id})",
-                "IcoPath": "steam.png",
+                "IcoPath": local_icon,
                 "JsonRPCAction": {"method": "launch_game", "parameters": [app_id]}
             })
         
         api_results = self.search_steam_api(search_term)
         
         if api_results:
-            threads = []
-            processed_api_results = [None] * len(api_results)
-            
-            for i, game_data in enumerate(api_results):
-                thread = threading.Thread(target=self.process_game_data, args=(game_data, i, processed_api_results))
-                threads.append(thread)
-                thread.start()
-            
-            for thread in threads:
-                thread.join()
-            
-            results.extend(processed_api_results)
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                future_to_game = {
+                    executor.submit(self.process_game_data, game_data): game_data 
+                    for game_data in api_results
+                }
+                
+                for future in as_completed(future_to_game):
+                    try:
+                        result = future.result()
+                        if result:
+                            results.append(result)
+                    except:
+                        pass
         
         if not results:
             results.append({
-                "Title": f"No games found for '{search_term}'", "SubTitle": "Try a different search term",
+                "Title": f"No games found for '{search_term}'", 
+                "SubTitle": "Try a different search term",
                 "IcoPath": "steam.png"
             })
         
