@@ -3,6 +3,8 @@ from pathlib import Path
 from io import BytesIO
 
 plugindir = Path.absolute(Path(__file__).parent)
+if str(plugindir) not in sys.path:
+    sys.path.insert(0, str(plugindir))
 lib_path = plugindir / 'lib'
 if str(lib_path) not in sys.path:
     sys.path.insert(0, str(lib_path))
