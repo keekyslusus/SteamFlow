@@ -11,7 +11,7 @@ search Steam store and launch games
 - [x] Regional pricing support
 - [x] Show current number of active players
 - [x] Async requests
-- [ ] Show installed game icons (wip)
+- [x] Show installed game icons
 
 ## Installation:
 type `pm install SteamFlow by keekys`in FlowLauncher

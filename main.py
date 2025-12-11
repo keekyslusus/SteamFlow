@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 from io import BytesIO
 
-plugindir = Path.absolute(Path(__file__).parent)
+plugindir = Path(__file__).parent.resolve()
 if str(plugindir) not in sys.path:
     sys.path.insert(0, str(plugindir))
 lib_path = plugindir / 'lib'
@@ -10,7 +10,6 @@ if str(lib_path) not in sys.path:
     sys.path.insert(0, str(lib_path))
 
 import json
-import os
 import urllib.parse
 import urllib.request
 import subprocess
@@ -36,18 +35,16 @@ class SteamPlugin:
         self.installed_games = {}
         self.last_update = 0
         self.update_installed_games()
-        plugin_dir = os.path.dirname(__file__)
-        self.cache_dir = os.path.join(plugin_dir, "img_cache")
-        self.country_cache_file = os.path.join(plugin_dir, "country_cache.json")
-        self.steam_icon_cache = os.path.join(self.steam_path, "appcache", "librarycache") if self.steam_path else None
-        if not os.path.exists(self.cache_dir):
-            os.makedirs(self.cache_dir)
+        plugin_dir = Path(__file__).parent
+        self.cache_dir = plugin_dir / "img_cache"
+        self.country_cache_file = plugin_dir / "country_cache.json"
+        self.steam_icon_cache = (self.steam_path / "appcache" / "librarycache") if self.steam_path else None
+        self.cache_dir.mkdir(exist_ok=True)
         threading.Thread(target=self.cleanup_image_cache, daemon=True).start()
 
     def load_cached_country_code(self):
-        plugin_dir = os.path.dirname(__file__)
-        cache_file = os.path.join(plugin_dir, "country_cache.json")
-        if os.path.exists(cache_file):
+        cache_file = Path(__file__).parent / "country_cache.json"
+        if cache_file.exists():
             try:
                 with open(cache_file, 'r') as f:
                     cache_data = json.load(f)
@@ -56,7 +53,7 @@ class SteamPlugin:
                         return cache_data.get('country_code', 'us')
             except:
                 pass
-        
+
         threading.Thread(target=self._update_country_code_async, daemon=True).start()
         return 'us'
 
@@ -78,16 +75,15 @@ class SteamPlugin:
             pass
 
     def cleanup_image_cache(self):
-        if not os.path.isdir(self.cache_dir): return
+        if not self.cache_dir.is_dir(): return
         now = time.time()
         age_limit_seconds = 3 * 24 * 60 * 60
         try:
-            for filename in os.listdir(self.cache_dir):
-                file_path = os.path.join(self.cache_dir, filename)
-                if os.path.isfile(file_path):
-                    file_mod_time = os.path.getmtime(file_path)
+            for file_path in self.cache_dir.iterdir():
+                if file_path.is_file():
+                    file_mod_time = file_path.stat().st_mtime
                     if (now - file_mod_time) > age_limit_seconds:
-                        os.remove(file_path)
+                        file_path.unlink()
         except Exception: pass
 
     def get_steam_path(self):
@@ -100,26 +96,27 @@ class SteamPlugin:
             try:
                 with winreg.OpenKey(hkey, path) as key:
                     steam_path, _ = winreg.QueryValueEx(key, "InstallPath")
-                    if os.path.exists(steam_path): return steam_path
+                    steam_path = Path(steam_path)
+                    if steam_path.exists(): return steam_path
             except: continue
         return None
 
     def get_all_steam_library_paths(self):
         library_paths = []
         if not self.steam_path: return library_paths
-        main_library_path = os.path.join(self.steam_path, "steamapps")
-        if os.path.exists(main_library_path): library_paths.append(main_library_path)
-        library_folders_vdf_path = os.path.join(main_library_path, "libraryfolders.vdf")
+        main_library_path = self.steam_path / "steamapps"
+        if main_library_path.exists(): library_paths.append(main_library_path)
+        library_folders_vdf_path = main_library_path / "libraryfolders.vdf"
         try:
-            if os.path.exists(library_folders_vdf_path):
+            if library_folders_vdf_path.exists():
                 with open(library_folders_vdf_path, 'r', encoding='utf-8') as f:
                     data = vdf.load(f)
                 for key in data.get('libraryfolders', {}):
                     if key.isdigit():
                         folder_info = data['libraryfolders'][key]
                         if 'path' in folder_info:
-                            alt_path = os.path.join(folder_info['path'], "steamapps")
-                            if os.path.exists(alt_path) and alt_path not in library_paths:
+                            alt_path = Path(folder_info['path']) / "steamapps"
+                            if alt_path.exists() and alt_path not in library_paths:
                                 library_paths.append(alt_path)
         except Exception: pass
         return library_paths
@@ -131,17 +128,15 @@ class SteamPlugin:
         all_library_paths = self.get_all_steam_library_paths()
         for steamapps_path in all_library_paths:
             try:
-                if os.path.exists(steamapps_path):
-                    for filename in os.listdir(steamapps_path):
-                        if filename.startswith("appmanifest_") and filename.endswith(".acf"):
-                            acf_path = os.path.join(steamapps_path, filename)
-                            try:
-                                with open(acf_path, 'r', encoding='utf-8', errors='ignore') as f:
-                                    acf_data = vdf.load(f).get('AppState', {})
-                                app_id = acf_data.get('appid')
-                                name = acf_data.get('name')
-                                if app_id and name: self.installed_games[app_id] = name
-                            except Exception: continue
+                if steamapps_path.exists():
+                    for acf_file in steamapps_path.glob("appmanifest_*.acf"):
+                        try:
+                            with open(acf_file, 'r', encoding='utf-8', errors='ignore') as f:
+                                acf_data = vdf.load(f).get('AppState', {})
+                            app_id = acf_data.get('appid')
+                            name = acf_data.get('name')
+                            if app_id and name: self.installed_games[app_id] = name
+                        except Exception: continue
             except Exception: continue
         self.last_update = time.time()
 
@@ -152,7 +147,7 @@ class SteamPlugin:
             encoded_term = urllib.parse.quote(search_term)
             api_url = f"https://store.steampowered.com/api/storesearch/?term={encoded_term}&cc={self.country_code}&l=en"
             req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=3) as response:
+            with urllib.request.urlopen(req, timeout=0.7) as response:
                 data = json.loads(response.read().decode('utf-8'))
             games = []
             if 'items' in data:
@@ -166,19 +161,32 @@ class SteamPlugin:
         except Exception: return []
     
     def get_local_game_icon(self, app_id):
-        if not self.steam_icon_cache or not os.path.exists(self.steam_icon_cache):
+        if not self.steam_icon_cache or not self.steam_icon_cache.exists():
             return "steam.png"
-        
-        for ext in ['.jpg', '.png']:
-            icon_file = os.path.join(self.steam_icon_cache, f"{app_id}_icon{ext}")
-            if os.path.exists(icon_file):
-                return icon_file
-        
-        for ext in ['.jpg', '.png']:
-            logo_file = os.path.join(self.steam_icon_cache, f"{app_id}_logo{ext}")
-            if os.path.exists(logo_file):
-                return logo_file
-        
+
+        icon_cache_path = self.steam_icon_cache / str(app_id)
+
+        if not icon_cache_path.is_dir():
+            return "steam.png"
+
+        try:
+            files = [
+                f for f in icon_cache_path.iterdir()
+                if f.suffix.lower() == '.jpg' and f.is_file()
+            ]
+
+            filtered_files = [
+                f for f in files
+                if not (f.name.lower().startswith('header') or
+                       f.name.lower().startswith('library') or
+                       f.name.lower().startswith('logo'))
+            ]
+
+            if filtered_files:
+                return str(filtered_files[0])
+        except Exception:
+            pass
+
         return "steam.png"
 
     def download_icon(self, image_url, save_path):
@@ -203,16 +211,16 @@ class SteamPlugin:
     def process_game_data(self, game_data):
         app_id = game_data.get('id')
         name = game_data.get('name')
-        
+
         image_url = game_data.get('tiny_image')
         icon_path = "steam.png"
         if image_url and app_id:
-            cached_icon_path = os.path.join(self.cache_dir, f"{app_id}.png")
-            if os.path.exists(cached_icon_path):
-                icon_path = cached_icon_path
+            cached_icon_path = self.cache_dir / f"{app_id}.png"
+            if cached_icon_path.exists():
+                icon_path = str(cached_icon_path)
             else:
-                if self.download_icon(image_url, cached_icon_path):
-                    icon_path = cached_icon_path
+                if self.download_icon(image_url, str(cached_icon_path)):
+                    icon_path = str(cached_icon_path)
         
         player_count = self.get_current_players(app_id)
         player_count_str = ""
@@ -300,9 +308,11 @@ class SteamPlugin:
     def open_steam(self):
         try: subprocess.run(['start', 'steam://open/main'], shell=True); return "Steam opened"
         except:
-            if self.steam_path and os.path.exists(os.path.join(self.steam_path, "steam.exe")):
-                try: subprocess.run([os.path.join(self.steam_path, "steam.exe")]); return "Steam opened"
-                except: pass
+            if self.steam_path:
+                steam_exe = self.steam_path / "steam.exe"
+                if steam_exe.exists():
+                    try: subprocess.run([str(steam_exe)]); return "Steam opened"
+                    except: pass
             return "Failed to open Steam"
 
     def safe_print_json(self, data):
