@@ -250,16 +250,28 @@ class SteamPlugin:
     def query(self, search_term):
         self.update_installed_games()
         results = []
+
         if not search_term:
-            return [{"Title": "SteamFlow", "SubTitle": f"Found {len(self.installed_games)} installed games. Type to search...", "IcoPath": "steam.png"}]
-        
+            games_to_show = sorted(self.installed_games.items(), key=lambda x: x[1].lower())[:67]
+            for app_id, name in games_to_show:
+                local_icon = self.get_local_game_icon(app_id)
+                results.append({
+                    "Title": f"🎮 {name}",
+                    "SubTitle": f"Launch installed game (ID: {app_id})",
+                    "IcoPath": local_icon,
+                    "JsonRPCAction": {"method": "launch_game", "parameters": [app_id]}
+                })
+            if not results:
+                results.append({"Title": "SteamFlow", "SubTitle": "No installed games found. Type to search Steam store...", "IcoPath": "steam.png"})
+            return results
+
         search_lower = search_term.lower()
         matching_games = []
         for app_id, name in self.installed_games.items():
             if search_lower in name.lower():
                 matching_games.append((app_id, name))
         matching_games.sort(key=lambda x: (x[1].lower().find(search_lower), len(x[1])))
-        
+
         for app_id, name in matching_games[:5]:
             local_icon = self.get_local_game_icon(app_id)
             results.append({
@@ -268,16 +280,16 @@ class SteamPlugin:
                 "IcoPath": local_icon,
                 "JsonRPCAction": {"method": "launch_game", "parameters": [app_id]}
             })
-        
+
         api_results = self.search_steam_api(search_term)
-        
+
         if api_results:
             with ThreadPoolExecutor(max_workers=5) as executor:
                 future_to_game = {
-                    executor.submit(self.process_game_data, game_data): game_data 
+                    executor.submit(self.process_game_data, game_data): game_data
                     for game_data in api_results
                 }
-                
+
                 for future in as_completed(future_to_game):
                     try:
                         result = future.result()
@@ -285,16 +297,16 @@ class SteamPlugin:
                             results.append(result)
                     except:
                         pass
-        
+
         if not results:
             results.append({
-                "Title": f"No games found for '{search_term}'", 
+                "Title": f"No games found for '{search_term}'",
                 "SubTitle": "Try a different search term",
                 "IcoPath": "steam.png"
             })
-        
+
         return results
-    
+
     def launch_game(self, app_id):
         try: subprocess.run(['start', f"steam://rungameid/{app_id}"], shell=True); return "Game launched"
         except Exception as e: return f"Failed to launch game: {str(e)}"
