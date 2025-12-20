@@ -1,5 +1,5 @@
 {
-  "ID": "9a660827-89d3-422f-897e-c307c3d78bef",
+  "ID": "A7F3C4E16B8D4B5AB2D7139EEC8FA0B4",
   "ActionKeyword": "steam",
   "Name": "SteamFlow",
   "Description": "Launch Steam games and search Steam store",
@@ -10,4 +10,5 @@
   "IcoPath": "steam.png",
   "ExecuteFileName": "main.py"
 }
+
 
