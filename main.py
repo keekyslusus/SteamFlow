@@ -127,7 +127,7 @@ class SteamPlugin:
                     cache_data = json.load(f)
                     cache_time = cache_data.get("timestamp", 0)
                     if time.time() - cache_time < 7 * 24 * 60 * 60:
-                        return cache_data.get("country_code", "us")
+                        return currency_util.normalize_country_code(cache_data.get("country_code"))
             except Exception:
                 self.log_exception("Failed to read country cache")
 
@@ -139,15 +139,14 @@ class SteamPlugin:
             api_url = "http://ip-api.com/json/?fields=countryCode"
             with urllib.request.urlopen(api_url, timeout=2) as response:
                 data = json.loads(response.read().decode("utf-8"))
-                cc = data.get("countryCode", "us").lower()
-                if cc in currency_util.CURRENCY_DATA:
-                    self.country_code = cc
-                    cache_data = {
-                        "country_code": cc,
-                        "timestamp": time.time(),
-                    }
-                    with open(self.country_cache_file, "w", encoding="utf-8") as f:
-                        json.dump(cache_data, f)
+                cc = currency_util.normalize_country_code(data.get("countryCode"))
+                self.country_code = cc
+                cache_data = {
+                    "country_code": cc,
+                    "timestamp": time.time(),
+                }
+                with open(self.country_cache_file, "w", encoding="utf-8") as f:
+                    json.dump(cache_data, f)
         except Exception:
             self.log_exception("Failed to update country code asynchronously")
 
