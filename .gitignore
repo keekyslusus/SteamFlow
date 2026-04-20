@@ -1,0 +1,10 @@
+/lib
+/steamflow/__pycache__
+/asmr/
+/__pycache__
+/tests/__pycache__
+*.log
+*.apk
+/reels/
+*.bundle
+*.torrent

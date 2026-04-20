@@ -1,0 +1,73 @@
+body:
+  - type: input
+    attributes:
+      name: blacklisted_app_ids
+      label: "Blacklisted App IDs"
+      description: "Comma-separated Steam App IDs hidden from local and store results\n228980 - Steamworks Common Redistributables"
+      defaultValue: "228980"
+  - type: checkbox
+    attributes:
+      name: show_platforms
+      label: "Show available platforms"
+      description: "Show Win/Mac/Linux in Steam store results"
+      defaultValue: true
+  - type: checkbox
+    attributes:
+      name: show_player_count
+      label: "Show player count"
+      description: "Show current players when Steam provides the data"
+      defaultValue: true
+  - type: checkbox
+    attributes:
+      name: show_positive_reviews
+      label: "Show positive reviews"
+      description: "Show the positive review percentage and rating summary from Steam"
+      defaultValue: true
+  - type: checkbox
+    attributes:
+      name: show_playtime
+      label: "Show playtime"
+      description: "Show total playtime for installed games from localconfig.vdf"
+      defaultValue: true
+  - type: checkbox
+    attributes:
+      name: show_last_played
+      label: "Show last played"
+      description: "Show the last played date for installed games from localconfig.vdf"
+      defaultValue: true
+  - type: checkbox
+    attributes:
+      name: show_achievements
+      label: "Show achievements"
+      description: "Show local achievement progress for installed games from Steam's appcache stats"
+      defaultValue: true
+  - type: checkbox
+    attributes:
+      name: show_prices
+      label: "Show prices"
+      description: "Show regional prices in Steam store results"
+      defaultValue: true
+  - type: checkbox
+    attributes:
+      name: sort_local_by_recent
+      label: "Sort local by recent"
+      description: "For empty search, show recently launched local games first"
+      defaultValue: true
+  - type: checkbox
+    attributes:
+      name: hide_hidden_games
+      label: "Hide Steam hidden collection games"
+      description: "Filter games from Steam's Hidden collection in local and store results"
+      defaultValue: true
+  - type: checkbox
+    attributes:
+      name: detect_owned_games
+      label: "Detect owned games with Steam API key"
+      description: "Use a stored Steam Web API key to mark owned Steam store results for the active Steam account"
+      defaultValue: true
+  - type: checkbox
+    attributes:
+      name: enable_perf_logging
+      label: "[debug] Enable performance logging"
+      description: "Log slow query stages and network calls to plugin_steamflow.log"
+      defaultValue: false

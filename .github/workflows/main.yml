@@ -12,7 +12,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     
     permissions:
       contents: write
@@ -35,13 +35,32 @@ jobs:
         path: 'plugin.json'
         prop_path: 'Version'
 
-    - name: Install dependencies into lib folder and zip the plugin
+    - name: Install dependencies into lib folder
+      shell: pwsh
       run: |
         python -m pip install --upgrade pip
-        # Install the only runtime dependency into the ./lib directory
-        pip install vdf -t ./lib
-        # Create the zip file for release, excluding git files
-        zip -r Flow.Launcher.Plugin.SteamFlow.zip . -x '*.git*'
+        if (Test-Path .\lib) {
+          Remove-Item .\lib -Recurse -Force
+        }
+        # Install Windows runtime dependencies into the ./lib directory
+        pip install flox-lib vdf urllib3 certifi pillow==12.1.0 -t .\lib
+
+    - name: Create release zip
+      shell: pwsh
+      run: |
+        $staging = Join-Path $PWD '.release'
+        if (Test-Path $staging) {
+          Remove-Item $staging -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $staging | Out-Null
+        Get-ChildItem -Force | Where-Object { $_.Name -notin '.git', '.github', '.release' } | ForEach-Object {
+          Copy-Item -LiteralPath $_.FullName -Destination $staging -Recurse -Force
+        }
+        $zipPath = Join-Path $PWD 'Flow.Launcher.Plugin.SteamFlow.zip'
+        if (Test-Path $zipPath) {
+          Remove-Item $zipPath -Force
+        }
+        Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zipPath
 
     - name: Publish Release
       if: success()
