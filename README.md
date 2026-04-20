@@ -92,6 +92,7 @@
 - `Add to Google Calendar` context menu option in `steam wishlist` for upcoming games with a known release date
 - `steam recent` with `IPlayerService/GetRecentlyPlayedGames` under discussion
 - Commands to display the `New & trending`, `Top sellers` and `Specials` lists
+- Send messages to friends directly from SteamFlow
 
 ## Installation
 type `pm install SteamFlow by keekys`in FlowLauncher
