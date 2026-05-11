@@ -12,13 +12,28 @@ CURRENCY_DATA = {
     "cr": {"symbol": "₡", "is_prefixed": True, "decimal_digits": 2, "decimal_separator": ",", "thousands_separator": "."},
     "eu": {"symbol": "€", "is_prefixed": False, "decimal_digits": 2, "decimal_separator": ",", "thousands_separator": "."},
     "hk": {"symbol": "HK$", "is_prefixed": True, "decimal_digits": 2, "decimal_separator": ".", "thousands_separator": ","},
-    "id": {"symbol": "Rp", "is_prefixed": True, "decimal_digits": 0, "decimal_separator": ",", "thousands_separator": "."},
+    "id": {
+        "symbol": "Rp",
+        "is_prefixed": True,
+        "decimal_digits": 0,
+        "decimal_separator": ",",
+        "thousands_separator": " ",
+        "symbol_separator": " ",
+        "price_divisor": 100,
+    },
     "il": {"symbol": "₪", "is_prefixed": True, "decimal_digits": 2, "decimal_separator": ".", "thousands_separator": ","},
     "in": {"symbol": "₹", "is_prefixed": True, "decimal_digits": 2, "decimal_separator": ".", "thousands_separator": ","},
     "jp": {"symbol": "¥", "is_prefixed": True, "decimal_digits": 0, "decimal_separator": ".", "thousands_separator": ","},
     "kr": {"symbol": "₩", "is_prefixed": True, "decimal_digits": 0, "decimal_separator": ".", "thousands_separator": ","},
     "kw": {"symbol": "KD", "is_prefixed": True, "decimal_digits": 3, "decimal_separator": ".", "thousands_separator": ","},
-    "kz": {"symbol": "₸", "is_prefixed": False, "decimal_digits": 2, "decimal_separator": ",", "thousands_separator": " "},
+    "kz": {
+        "symbol": "₸",
+        "is_prefixed": False,
+        "decimal_digits": 0,
+        "decimal_separator": ",",
+        "thousands_separator": " ",
+        "price_divisor": 100,
+    },
     "mx": {"symbol": "$", "is_prefixed": True, "decimal_digits": 2, "decimal_separator": ".", "thousands_separator": ","},
     "my": {"symbol": "RM", "is_prefixed": True, "decimal_digits": 2, "decimal_separator": ".", "thousands_separator": ","},
     "no": {"symbol": "kr", "is_prefixed": False, "decimal_digits": 2, "decimal_separator": ",", "thousands_separator": " "},
@@ -99,7 +114,7 @@ def format_price(price_int, country_code="us"):
 
     is_negative = price_int < 0
     absolute_value = abs(price_int)
-    divisor = 10 ** decimal_digits
+    divisor = info.get("price_divisor", 10 ** decimal_digits)
 
     if decimal_digits > 0:
         whole_part, fractional_part = divmod(absolute_value, divisor)
@@ -107,11 +122,12 @@ def format_price(price_int, country_code="us"):
         fractional_str = f"{fractional_part:0{decimal_digits}d}"
         number = f"{whole_str}{decimal_separator}{fractional_str}"
     else:
+        absolute_value = absolute_value // divisor
         number = f"{absolute_value:,}".replace(",", thousands_separator)
 
     if is_negative:
         number = f"-{number}"
 
     if is_prefixed:
-        return f"{symbol}{number}"
+        return f"{symbol}{info.get('symbol_separator', '')}{number}"
     return f"{number} {symbol}"

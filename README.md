@@ -86,13 +86,6 @@
 - Enables wishlist browsing
 - Shows your active profile status (Online, playing a game, etc.)
 
-## TODO:
-
-- Pause/resume download/update for installing/updating games using Remote access [(`IClientCommService`)](docs/clientcomm.md)
-- `Add to Google Calendar` context menu option in `steam wishlist` for upcoming games with a known release date
-- `steam recent` with `IPlayerService/GetRecentlyPlayedGames` under discussion
-- Commands to display the `New & trending`, `Top sellers` and `Specials` lists
-- Send messages to friends directly from SteamFlow
 
 ## Installation
 type `pm install SteamFlow by keekys`in FlowLauncher
