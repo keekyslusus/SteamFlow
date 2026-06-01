@@ -192,6 +192,14 @@ class SteamContextMenuPlugin(SteamPluginActionsMixin, Flox):
         return str(self.plugin_dir / "plugin_steamflow.log")
 
     @property
+    def plugindir(self):
+        return str(PACKAGE_ROOT)
+
+    @property
+    def user_keyword(self):
+        return str(getattr(self, "action_keyword", "") or "steam").strip()
+
+    @property
     def steam_path(self):
         if self._steam_path is UNSET:
             self._steam_path = self._find_steam_path()
@@ -222,6 +230,7 @@ class SteamContextMenuPlugin(SteamPluginActionsMixin, Flox):
                 icon=entry["icon"],
                 method=entry["method"],
                 parameters=entry.get("parameters"),
+                auto_complete_text=entry["title"],
             )
 
     def context_menu(self, data):

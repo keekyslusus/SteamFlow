@@ -5,8 +5,11 @@ import threading
 import time
 import traceback
 from ctypes import wintypes
+from pathlib import Path
 
 from . import util_currency, util_steam_date
+
+PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 
 
 class SteamPluginCoreMixin:
@@ -15,6 +18,10 @@ class SteamPluginCoreMixin:
 
     def configure_logger(self):
         self.logger_level("info")
+
+    @property
+    def plugindir(self):
+        return str(PACKAGE_ROOT)
 
     def log(self, level, message):
         getattr(self.logger, level.lower(), self.logger.info)(message)
@@ -45,8 +52,9 @@ class SteamPluginCoreMixin:
 
     def add_result(self, result):
         action = result.get("JsonRPCAction", {})
+        title = result["Title"]
         self.add_item(
-            title=result["Title"],
+            title=title,
             subtitle=result.get("SubTitle", ""),
             icon=result.get("IcoPath", self.DEFAULT_ICON),
             method=action.get("method"),
@@ -54,6 +62,7 @@ class SteamPluginCoreMixin:
             context=result.get("ContextData"),
             score=result.get("Score", 0),
             dont_hide=action.get("dontHideAfterAction", False),
+            auto_complete_text=self.build_plugin_query(title),
         )
 
     def build_action(self, method, *parameters):
@@ -77,7 +86,11 @@ class SteamPluginCoreMixin:
                 if normalized:
                     return normalized
 
-        return str(getattr(self, "user_keyword", "") or getattr(self, "action_keyword", "") or "steam").strip()
+        return str(getattr(self, "action_keyword", "") or "steam").strip()
+
+    @property
+    def user_keyword(self):
+        return self.get_current_plugin_keyword()
 
     def build_plugin_query(self, *parts):
         keyword = self.get_current_plugin_keyword()

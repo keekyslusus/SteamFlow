@@ -74,5 +74,35 @@ class CoreStatusTests(unittest.TestCase):
         self.assertIn("Bound to ActiveUser", subtitle)
 
 
+class AddResultHarness(SteamPluginCoreMixin):
+    DEFAULT_ICON = "default"
+    action_keyword = "steam"
+
+    @property
+    def app_settings(self):
+        raise FileNotFoundError("Flow Launcher settings are unavailable")
+
+    @property
+    def user_keyword(self):
+        raise AssertionError("flox user_keyword must not be used as a fallback")
+
+    def add_item(self, **item):
+        self.item = item
+
+
+class AddResultTests(unittest.TestCase):
+    def test_plugindir_does_not_depend_on_working_directory(self):
+        harness = AddResultHarness()
+
+        self.assertEqual(Path(harness.plugindir), PROJECT_ROOT)
+
+    def test_add_result_supplies_autocomplete_without_flox_app_settings(self):
+        harness = AddResultHarness()
+
+        harness.add_result({"Title": "Portal 2"})
+
+        self.assertEqual(harness.item["auto_complete_text"], "steam Portal 2")
+
+
 if __name__ == "__main__":
     unittest.main()

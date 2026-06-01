@@ -39,6 +39,9 @@ class ContextMenuHarness(SteamContextMenuPlugin):
         self.fetch_calls.append(str(app_id))
         return {"type": "game", "is_free": False}
 
+    def add_item(self, **item):
+        self.added_item = item
+
 
 class ContextMenuRefundTests(unittest.TestCase):
     def test_existing_refund_state_short_circuits_everything(self):
@@ -126,6 +129,24 @@ class ContextMenuRefundTests(unittest.TestCase):
             self.assertEqual(plugin.fetch_calls, ["1451940"])
             cache_data = json.loads((Path(temp_dir) / "cache_metric.json").read_text(encoding="utf-8"))
             self.assertTrue(cache_data["app_details_cache"]["1451940"]["success"])
+
+    def test_menu_entry_supplies_autocomplete_without_flox_app_settings(self):
+        plugin = ContextMenuHarness(".")
+
+        plugin._add_menu_entries(
+            [
+                {
+                    "title": "Steam: Open Main Window",
+                    "subtitle": "Open the Steam client",
+                    "icon": "default",
+                    "method": "open_steam",
+                }
+            ]
+        )
+
+        self.assertEqual(plugin.added_item["auto_complete_text"], "Steam: Open Main Window")
+        self.assertEqual(Path(plugin.plugindir), PROJECT_ROOT)
+        self.assertEqual(plugin.user_keyword, "steam")
 
 
 if __name__ == "__main__":
