@@ -156,6 +156,14 @@ class SteamContextMenuPlugin(SteamPluginCartMixin, SteamPluginActionsMixin, Stea
     def tr(self, key, default=None, **values):
         return Localizer(self.get_language()).tr(key, default=default, **values)
 
+    def get_setting_bool(self, name, default):
+        value = self.settings.get(name, default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
     def start_steam_wishlist_mutation_worker(self, steamid64, app_id, action):
         start_steam_wishlist_mutation_worker_process(
             self.plugin_dir,
@@ -280,6 +288,8 @@ class SteamContextMenuPlugin(SteamPluginCartMixin, SteamPluginActionsMixin, Stea
                 can_add_to_cart=can_add_to_cart,
                 can_add_to_wishlist=can_add_to_wishlist,
                 can_remove_from_wishlist=can_remove_from_wishlist,
+                show_steamdb=self.get_setting_bool("show_steamdb_context_menu", True),
+                show_csrin=self.get_setting_bool("show_csrin_context_menu", True),
                 steamid64=steamid64,
                 tr=getattr(self, "tr", None),
             )
