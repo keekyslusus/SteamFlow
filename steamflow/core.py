@@ -1,27 +1,52 @@
-import ctypes
-import json
 import re
 import threading
 import time
 import traceback
-from ctypes import wintypes
-from pathlib import Path
 
 from . import util_currency, util_steam_date
-
-PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+from .cache_utils import (
+    cleanup_timestamped_cache_entries,
+    get_timestamped_cache_entry_state,
+    is_timestamp_fresh,
+    update_timestamped_cache_entry,
+)
+from .constants import STEAMFLOW_CONFIG
+from .http_client import http_get_json, http_pool_get, http_pool_request
+from .localization import Localizer, resolve_configured_locale
+from .providers import get_plugin_providers
+from .secure_storage import (
+    DATA_BLOB as SecureDataBlob,
+    build_data_blob,
+    protect_dpapi_bytes,
+    read_protected_text,
+    unprotect_dpapi_bytes,
+    write_protected_text,
+)
+from .tasks import get_background_task_manager
 
 
 class SteamPluginCoreMixin:
+    CONFIG = STEAMFLOW_CONFIG
     DPAPI_ENTROPY = b"SteamFlow-OwnedGames-Key-v1"
+    DATA_BLOB = SecureDataBlob
     STEAM_WEB_API_KEY_PATTERN = re.compile(r"^[A-Fa-f0-9]{32}$")
+    REQUIRED_PLUGIN_ATTRS = (
+        "store_collection_cache",
+        "store_user_preferences_cache",
+    )
+    REQUIRED_PLUGIN_PROVIDERS = (
+        "account",
+        "owned_api",
+        "runtime",
+        "wishlist",
+    )
+
+    @property
+    def core_providers(self):
+        return get_plugin_providers(self)
 
     def configure_logger(self):
         self.logger_level("info")
-
-    @property
-    def plugindir(self):
-        return str(PACKAGE_ROOT)
 
     def log(self, level, message):
         getattr(self.logger, level.lower(), self.logger.info)(message)
@@ -30,31 +55,21 @@ class SteamPluginCoreMixin:
         self.logger.error("%s\n%s", message, traceback.format_exc(limit=3).strip())
 
     def _http_get(self, url, timeout, headers=None):
-        response = self.http_pool.request(
-            "GET",
-            url,
-            headers=headers,
-            timeout=timeout,
-            retries=False,
-        )
-        if response.status >= 400:
-            raise self.urllib3.exceptions.HTTPError(f"HTTP {response.status}")
-        return response
+        return http_pool_get(self.http_pool, self.urllib3, url, timeout=timeout, headers=headers)
 
     def _prewarm_connections(self):
         start_time = time.perf_counter()
         for url in ("https://store.steampowered.com/", "https://api.steampowered.com/"):
             try:
-                self.http_pool.request("HEAD", url, timeout=2, retries=False)
+                http_pool_request(self.http_pool, self.urllib3, "HEAD", url, timeout=2)
             except Exception:
                 pass
         self.log_slow_call("prewarm_connections", (time.perf_counter() - start_time) * 1000)
 
     def add_result(self, result):
         action = result.get("JsonRPCAction", {})
-        title = result["Title"]
         self.add_item(
-            title=title,
+            title=result["Title"],
             subtitle=result.get("SubTitle", ""),
             icon=result.get("IcoPath", self.DEFAULT_ICON),
             method=action.get("method"),
@@ -62,7 +77,6 @@ class SteamPluginCoreMixin:
             context=result.get("ContextData"),
             score=result.get("Score", 0),
             dont_hide=action.get("dontHideAfterAction", False),
-            auto_complete_text=self.build_plugin_query(title),
         )
 
     def build_action(self, method, *parameters):
@@ -86,11 +100,7 @@ class SteamPluginCoreMixin:
                 if normalized:
                     return normalized
 
-        return str(getattr(self, "action_keyword", "") or "steam").strip()
-
-    @property
-    def user_keyword(self):
-        return self.get_current_plugin_keyword()
+        return str(getattr(self, "user_keyword", "") or getattr(self, "action_keyword", "") or "steam").strip()
 
     def build_plugin_query(self, *parts):
         keyword = self.get_current_plugin_keyword()
@@ -117,6 +127,15 @@ class SteamPluginCoreMixin:
         result.update(extra_fields)
         return result
 
+    def get_language(self):
+        return resolve_configured_locale(self.settings.get("language", "auto"))
+
+    def get_steam_language(self):
+        return Localizer(self.get_language()).steam_language
+
+    def tr(self, key, default=None, **values):
+        return Localizer(self.get_language()).tr(key, default=default, **values)
+
     def build_context_data(
         self,
         app_id=None,
@@ -127,6 +146,13 @@ class SteamPluginCoreMixin:
         playtime_minutes=None,
         has_current_account_local_data=None,
         coming_soon=None,
+        result_source=None,
+        store_type=None,
+        is_free=None,
+        has_price=None,
+        is_wishlisted=None,
+        wishlist_actions_enabled=None,
+        steamid64=None,
     ):
         data = {}
         if app_id is not None:
@@ -145,6 +171,20 @@ class SteamPluginCoreMixin:
             data["has_current_account_local_data"] = bool(has_current_account_local_data)
         if coming_soon is not None:
             data["coming_soon"] = bool(coming_soon)
+        if result_source:
+            data["result_source"] = str(result_source)
+        if store_type:
+            data["store_type"] = str(store_type)
+        if is_free is not None:
+            data["is_free"] = bool(is_free)
+        if has_price is not None:
+            data["has_price"] = bool(has_price)
+        if is_wishlisted is not None:
+            data["is_wishlisted"] = bool(is_wishlisted)
+        if wishlist_actions_enabled is not None:
+            data["wishlist_actions_enabled"] = bool(wishlist_actions_enabled)
+        if steamid64:
+            data["steamid64"] = str(steamid64)
         return data
 
     def get_setting_bool(self, name, default):
@@ -156,13 +196,16 @@ class SteamPluginCoreMixin:
         return bool(value)
 
     def get_blacklisted_app_ids(self):
-        raw_value = self.settings.get("blacklisted_app_ids", ",".join(sorted(self.DEFAULT_BLACKLISTED_APP_IDS)))
+        raw_value = self.settings.get(
+            "blacklisted_app_ids",
+            ",".join(sorted(self.CONFIG.default_blacklisted_app_ids)),
+        )
         if isinstance(raw_value, list):
             parts = raw_value
         else:
             parts = str(raw_value).replace("\n", ",").split(",")
 
-        blacklist = set(self.DEFAULT_BLACKLISTED_APP_IDS)
+        blacklist = set(self.CONFIG.default_blacklisted_app_ids)
         for part in parts:
             app_id = str(part).strip()
             if app_id:
@@ -172,7 +215,7 @@ class SteamPluginCoreMixin:
         return blacklist
 
     def should_show_platforms(self):
-        return self.get_setting_bool("show_platforms", True)
+        return self.get_setting_bool("show_platforms", False)
 
     def should_show_player_count(self):
         return self.get_setting_bool("show_player_count", True)
@@ -205,7 +248,13 @@ class SteamPluginCoreMixin:
         return self.get_setting_bool("enable_perf_logging", False)
 
     def should_detect_owned_games(self):
-        return self.get_setting_bool("detect_owned_games", True)
+        return True
+
+    def should_show_steamdb_context_menu(self):
+        return self.get_setting_bool("show_steamdb_context_menu", True)
+
+    def should_show_csrin_context_menu(self):
+        return self.get_setting_bool("show_csrin_context_menu", True)
 
     def normalize_steam_web_api_key(self, value):
         normalized = str(value or "").strip()
@@ -219,7 +268,7 @@ class SteamPluginCoreMixin:
         timings.append((stage_name, (time.perf_counter() - start_time) * 1000))
 
     def log_slow_call(self, label, duration_ms, details=None):
-        if not self.should_log_performance() or duration_ms < self.PERF_STAGE_LOG_THRESHOLD_MS:
+        if not self.should_log_performance() or duration_ms < self.CONFIG.performance.stage_log_threshold_ms:
             return
         suffix = f" {details}" if details else ""
         self.log("info", f"Perf {label}={duration_ms:.1f}ms{suffix}")
@@ -227,8 +276,8 @@ class SteamPluginCoreMixin:
     def log_query_profile(self, search_term, timings, total_ms, result_count):
         if not self.should_log_performance():
             return
-        if total_ms < self.PERF_QUERY_LOG_THRESHOLD_MS and all(
-            duration_ms < self.PERF_STAGE_LOG_THRESHOLD_MS for _stage_name, duration_ms in timings
+        if total_ms < self.CONFIG.performance.query_log_threshold_ms and all(
+            duration_ms < self.CONFIG.performance.stage_log_threshold_ms for _stage_name, duration_ms in timings
         ):
             return
 
@@ -242,71 +291,21 @@ class SteamPluginCoreMixin:
             f"Perf query='{query_label}' total={total_ms:.1f}ms results={result_count}; {stage_summary}",
         )
 
+    def is_timestamp_fresh(self, timestamp, ttl_seconds):
+        return is_timestamp_fresh(timestamp, ttl_seconds)
+
     def get_country_code(self):
         with self.state_lock:
             return self.country_code
 
     def _build_data_blob(self, data):
-        if not data:
-            return self.DATA_BLOB(0, None), None
-        buffer = ctypes.create_string_buffer(data, len(data))
-        return self.DATA_BLOB(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_byte))), buffer
-
-    class DATA_BLOB(ctypes.Structure):
-        _fields_ = [
-            ("cbData", wintypes.DWORD),
-            ("pbData", ctypes.POINTER(ctypes.c_byte)),
-        ]
+        return build_data_blob(data)
 
     def _protect_dpapi_bytes(self, raw_bytes):
-        if not raw_bytes:
-            return b""
-
-        blob_in, buffer_in = self._build_data_blob(raw_bytes)
-        blob_entropy, buffer_entropy = self._build_data_blob(self.DPAPI_ENTROPY)
-        blob_out = self.DATA_BLOB()
-
-        result = ctypes.windll.crypt32.CryptProtectData(
-            ctypes.byref(blob_in),
-            None,
-            ctypes.byref(blob_entropy),
-            None,
-            None,
-            0,
-            ctypes.byref(blob_out),
-        )
-        if not result:
-            raise ctypes.WinError()
-
-        try:
-            return ctypes.string_at(blob_out.pbData, blob_out.cbData)
-        finally:
-            ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+        return protect_dpapi_bytes(raw_bytes, self.DPAPI_ENTROPY)
 
     def _unprotect_dpapi_bytes(self, protected_bytes):
-        if not protected_bytes:
-            return b""
-
-        blob_in, buffer_in = self._build_data_blob(protected_bytes)
-        blob_entropy, buffer_entropy = self._build_data_blob(self.DPAPI_ENTROPY)
-        blob_out = self.DATA_BLOB()
-
-        result = ctypes.windll.crypt32.CryptUnprotectData(
-            ctypes.byref(blob_in),
-            None,
-            ctypes.byref(blob_entropy),
-            None,
-            None,
-            0,
-            ctypes.byref(blob_out),
-        )
-        if not result:
-            raise ctypes.WinError()
-
-        try:
-            return ctypes.string_at(blob_out.pbData, blob_out.cbData)
-        finally:
-            ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+        return unprotect_dpapi_bytes(protected_bytes, self.DPAPI_ENTROPY)
 
     def get_owned_api_key(self):
         with self.state_lock:
@@ -317,9 +316,9 @@ class SteamPluginCoreMixin:
             return None
 
         try:
-            protected_bytes = self.owned_api_key_file.read_bytes()
-            raw_bytes = self._unprotect_dpapi_bytes(protected_bytes)
-            api_key = self.normalize_steam_web_api_key(raw_bytes.decode("utf-8", errors="ignore"))
+            api_key = self.normalize_steam_web_api_key(
+                read_protected_text(self.owned_api_key_file, self.DPAPI_ENTROPY)
+            )
             if not api_key:
                 return None
             with self.state_lock:
@@ -337,8 +336,7 @@ class SteamPluginCoreMixin:
         if not normalized_key:
             raise ValueError("Invalid Steam Web API key format")
 
-        protected_bytes = self._protect_dpapi_bytes(normalized_key.encode("utf-8"))
-        self.owned_api_key_file.write_bytes(protected_bytes)
+        write_protected_text(self.owned_api_key_file, normalized_key, self.DPAPI_ENTROPY)
 
         with self.state_lock:
             self.owned_api_key_value = normalized_key
@@ -358,7 +356,7 @@ class SteamPluginCoreMixin:
             self.owned_app_ids = set()
             self.owned_game_playtimes = {}
             self.owned_games_cache_loaded = True
-        self.save_owned_games_cache()
+        self.core_providers.owned_api.save_owned_games_cache()
 
     def remove_owned_api_key(self):
         try:
@@ -377,50 +375,63 @@ class SteamPluginCoreMixin:
             self.owned_api_key_last4 = None
             self.owned_api_key_loaded = True
         self.clear_owned_games_cache()
-        clear_wishlist_cache = getattr(self, "clear_wishlist_cache", None)
-        if callable(clear_wishlist_cache):
-            clear_wishlist_cache()
+        self.core_providers.wishlist.clear_cache()
 
     def is_owned_api_key_bound_to_active_user(self):
-        active_steamid64 = self.get_active_steam_user_steamid64()
+        active_steamid64 = self.core_providers.account.active_steamid64()
         with self.state_lock:
             bound_steamid64 = self.owned_api_key_bound_steamid64
         return bool(active_steamid64 and bound_steamid64 and active_steamid64 == bound_steamid64)
 
     def get_owned_games_status(self):
-        active_steamid64 = self.get_active_steam_user_steamid64()
-        active_user_details = self.get_steam_user_details(active_steamid64)
+        account_provider = self.core_providers.account
+        active_steamid64 = account_provider.active_steamid64()
+        active_user_details = account_provider.user_details(active_steamid64)
         with self.state_lock:
             bound_steamid64 = self.owned_api_key_bound_steamid64
             persona_name = self.owned_api_key_persona_name
             account_name = self.owned_api_key_account_name
             last_sync = self.owned_games_last_sync
 
-        if not self.has_owned_api_key():
-            return "Steam API Not Configured", "Save a Steam Web API key from the clipboard to enable Steam account features"
+        if not account_provider.has_owned_api_key():
+            return (
+                self.tr("api.status_not_configured"),
+                self.tr("api.not_configured_subtitle"),
+            )
 
-        account_label = persona_name or account_name or "Steam account"
+        account_label = persona_name or account_name or self.tr("api.steam_account")
         active_account_label = (
             active_user_details.get("persona_name")
             or active_user_details.get("account_name")
-            or "Steam account"
+            or self.tr("api.steam_account")
         )
         if active_steamid64 and bound_steamid64 and active_steamid64 != bound_steamid64:
             return (
-                "Steam API Bound to Another Account",
-                f"Saved for {account_label}. Active account is {active_account_label}",
+                self.tr("api.status_bound_other"),
+                self.tr(
+                    "api.bound_other_subtitle",
+                    account_label=account_label,
+                    active_account_label=active_account_label,
+                ),
             )
 
         if last_sync:
             age_minutes = max(0, int((time.time() - last_sync) / 60))
             return (
-                "Steam API Connected",
-                f"Bound to {account_label}, last sync {util_steam_date.format_relative_minutes_ago(age_minutes)}",
+                self.tr("api.status_connected"),
+                self.tr(
+                    "api.connected_last_sync",
+                    account_label=account_label,
+                    last_sync=util_steam_date.format_relative_minutes_ago(age_minutes, tr=self.tr),
+                ),
             )
 
         return (
-            "Steam API Connected",
-            f"Bound to {account_label}, waiting for first sync",
+            self.tr("api.status_connected"),
+            self.tr(
+                "api.connected_first_sync",
+                account_label=account_label,
+            ),
         )
 
     def update_player_count_cache(self, app_id, player_count):
@@ -442,42 +453,44 @@ class SteamPluginCoreMixin:
         )
 
     def _update_metric_cache_entry(self, cache, key, **payload):
-        if key is None:
-            return
         with self.state_lock:
-            cache[str(key)] = {
-                "timestamp": time.time(),
-                **payload,
-            }
-            self.metric_cache_dirty = True
-        self.save_metric_caches()
+            updated = update_timestamped_cache_entry(cache, key, payload)
+            if updated:
+                self.metric_cache_dirty = True
+        self.core_providers.runtime.save_metric_caches()
 
     def get_cache_entry_state(self, cache, key, ttl_seconds):
         with self.state_lock:
-            cached_entry = cache.get(str(key))
-        if not cached_entry:
-            return None, False
-        is_fresh = (time.time() - cached_entry.get("timestamp", 0)) < ttl_seconds
-        return cached_entry, is_fresh
+            return get_timestamped_cache_entry_state(cache, key, ttl_seconds)
+
+    def start_daemon_task(self, target, *args, **kwargs):
+        return get_background_task_manager(self).start(target, *args, **kwargs)
+
+    def start_delayed_daemon_task(self, delay_seconds, target, *args, **kwargs):
+        return get_background_task_manager(self).start_delayed(delay_seconds, target, *args, **kwargs)
+
+    def start_flagged_refresh(self, pending_flag_name, refresh_method):
+        return get_background_task_manager(self).start_flagged_refresh(self, pending_flag_name, refresh_method)
+
+    def finish_flagged_refresh(self, pending_flag_name):
+        get_background_task_manager(self).finish_flagged_refresh(self, pending_flag_name)
+
+    def start_keyed_refresh(self, pending_set_name, key, refresh_method):
+        return get_background_task_manager(self).start_keyed_refresh(self, pending_set_name, key, refresh_method)
+
+    def finish_keyed_refresh(self, pending_set_name, key):
+        get_background_task_manager(self).finish_keyed_refresh(self, pending_set_name, key)
 
     def start_metric_refresh(self, pending_set_name, key, refresh_method):
-        key = str(key)
-        with self.state_lock:
-            pending_refreshes = getattr(self, pending_set_name)
-            if key in pending_refreshes:
-                return
-            pending_refreshes.add(key)
-        threading.Thread(target=refresh_method, args=(key,), daemon=True).start()
+        self.start_keyed_refresh(pending_set_name, key, refresh_method)
 
     def finish_metric_refresh(self, pending_set_name, key):
-        with self.state_lock:
-            getattr(self, pending_set_name).discard(str(key))
+        self.finish_keyed_refresh(pending_set_name, key)
 
     def _fetch_country_code(self, timeout=2):
         try:
             api_url = "http://ip-api.com/json/?fields=countryCode"
-            response = self._http_get(api_url, timeout=timeout)
-            data = json.loads(response.data.decode("utf-8"))
+            data = http_get_json(self._http_get, api_url, timeout=timeout, headers=None)
             return util_currency.normalize_country_code(data.get("countryCode"))
         except Exception:
             self.log_exception("Failed to fetch country code")
@@ -505,55 +518,46 @@ class SteamPluginCoreMixin:
             self.log_exception("Failed to clean up image cache")
 
     def cleanup_cache_entries(self, cache, ttl_seconds):
-        now = time.time()
-        expired_keys = [
-            key
-            for key, value in cache.items()
-            if now - value.get("timestamp", 0) >= ttl_seconds
-        ]
-        for key in expired_keys:
-            cache.pop(key, None)
-        return bool(expired_keys)
+        return cleanup_timestamped_cache_entries(cache, ttl_seconds)
 
-    def cleanup_app_details_cache_entries(self):
-        now = time.time()
-        expired_keys = []
-        for key, value in self.app_details_cache.items():
-            ttl_seconds = (
-                self.APP_DETAILS_CACHE_TTL_SECONDS
-                if value.get("success")
-                else self.APP_DETAILS_FAILURE_CACHE_TTL_SECONDS
-            )
-            if now - value.get("timestamp", 0) >= ttl_seconds:
-                expired_keys.append(key)
-
-        for key in expired_keys:
-            self.app_details_cache.pop(key, None)
-        return bool(expired_keys)
+    def cleanup_app_details_cache_files(self):
+        return self.app_details_file_cache.cleanup()
 
     def cleanup_caches_if_needed(self):
         with self.state_lock:
-            if time.time() - self.last_cache_cleanup < self.CACHE_CLEANUP_INTERVAL_SECONDS:
+            if time.time() - self.last_cache_cleanup < self.CONFIG.cache.cleanup_interval_seconds:
                 return
-            self.cleanup_cache_entries(self.search_cache, self.SEARCH_CACHE_TTL_SECONDS)
-            player_cache_changed = self.cleanup_cache_entries(self.player_count_cache, self.PLAYER_COUNT_CACHE_TTL_SECONDS)
-            review_cache_changed = self.cleanup_cache_entries(self.review_score_cache, self.REVIEW_SCORE_CACHE_TTL_SECONDS)
+            self.cleanup_cache_entries(self.search_cache, self.CONFIG.cache.search_ttl_seconds)
+            self.cleanup_cache_entries(
+                self.store_collection_cache,
+                self.CONFIG.cache.store_collection_stale_ttl_seconds,
+            )
+            self.cleanup_cache_entries(
+                self.store_user_preferences_cache,
+                self.CONFIG.cache.store_user_preferences_ttl_seconds,
+            )
+            player_cache_changed = self.cleanup_cache_entries(
+                self.player_count_cache,
+                self.CONFIG.cache.player_count_ttl_seconds,
+            )
+            review_cache_changed = self.cleanup_cache_entries(
+                self.review_score_cache,
+                self.CONFIG.cache.review_score_ttl_seconds,
+            )
             achievement_schema_cache_changed = self.cleanup_cache_entries(
                 self.achievement_schema_cache,
-                self.ACHIEVEMENT_SCHEMA_CACHE_TTL_SECONDS,
+                self.CONFIG.cache.achievement_schema_ttl_seconds,
             )
             achievement_progress_cache_changed = self.cleanup_cache_entries(
                 self.achievement_progress_cache,
-                self.ACHIEVEMENT_PROGRESS_CACHE_TTL_SECONDS,
+                self.CONFIG.cache.achievement_progress_ttl_seconds,
             )
-            app_details_cache_changed = self.cleanup_app_details_cache_entries()
             if (
                 player_cache_changed
                 or review_cache_changed
                 or achievement_schema_cache_changed
                 or achievement_progress_cache_changed
-                or app_details_cache_changed
             ):
                 self.metric_cache_dirty = True
             self.last_cache_cleanup = time.time()
-        self.save_metric_caches()
+        self.core_providers.runtime.save_metric_caches()

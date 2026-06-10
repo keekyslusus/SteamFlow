@@ -11,6 +11,7 @@ if str(LIB_PATH) not in sys.path:
 
 from datetime import datetime
 
+from steamflow.localization import Localizer
 from steamflow import util_steam_date
 
 
@@ -42,6 +43,30 @@ class UtilSteamDateTests(unittest.TestCase):
 
         self.assertEqual(util_steam_date.format_wishlisted_date(1775383200, now=now), "Apr 5")
         self.assertEqual(util_steam_date.format_wishlisted_date(1712664000, now=now), "Apr 9, 2024")
+
+    def test_format_wishlisted_date_uses_localized_months(self):
+        now = datetime(2026, 4, 19, 12, 0, 0)
+
+        self.assertEqual(
+            util_steam_date.format_wishlisted_date(1775383200, now=now, tr=Localizer("ru").tr),
+            "5 апр.",
+        )
+        self.assertEqual(
+            util_steam_date.format_wishlisted_date(1712664000, now=now, tr=Localizer("ru").tr),
+            "9 апр. 2024",
+        )
+
+    def test_format_last_played_date_uses_localized_date_format(self):
+        now = datetime(2026, 4, 19, 12, 0, 0)
+
+        self.assertEqual(
+            util_steam_date.format_steam_last_played(1775383200, now=now, tr=Localizer("zh-Hans").tr),
+            "4月5日",
+        )
+        self.assertEqual(
+            util_steam_date.format_steam_last_played(1712664000, now=now, tr=Localizer("zh-Hans").tr),
+            "2024年4月9日",
+        )
 
 
 if __name__ == "__main__":

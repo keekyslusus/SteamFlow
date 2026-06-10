@@ -1,8 +1,11 @@
 import sys
 import threading
+import time
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LIB_PATH = PROJECT_ROOT / "lib"
@@ -26,6 +29,9 @@ class LocalLogicHarness(SteamPluginLocalMixin):
 
     def __init__(self):
         self.state_lock = threading.RLock()
+        self.app_download_progress_cache = {}
+        self.app_download_progress_cache_loaded = False
+        self.DOWNLOAD_PROGRESS_STALL_SECONDS = 6
         self.playtime_minutes = {}
         self.last_played_timestamps = {}
         self.owned_game_playtimes = {}
@@ -189,6 +195,90 @@ class StateFlagParsingTests(unittest.TestCase):
 
         self.assertTrue(parsed["is_visible"])
         self.assertEqual(parsed["label"], "Update Paused")
+
+    def test_derive_appmanifest_status_label_marks_stalled_update_as_paused(self):
+        state_flags = self.plugin.parse_state_flags(
+            self.plugin.STATE_FLAG_UPDATE_REQUIRED | self.plugin.STATE_FLAG_UPDATE_STARTED
+        )
+        manifest_data = {
+            "bytes_to_download": 420565344,
+            "bytes_downloaded": 179052688,
+            "bytes_to_stage": 541513970,
+            "bytes_staged": 177940262,
+        }
+
+        first_label = self.plugin.derive_appmanifest_status_label("646570", state_flags, manifest_data)
+        with self.plugin.state_lock:
+            self.plugin.app_download_progress_cache["646570"]["first_seen_at"] = time.time() - 10
+        second_label = self.plugin.derive_appmanifest_status_label("646570", state_flags, manifest_data)
+
+        self.assertEqual(first_label, "Updating")
+        self.assertEqual(second_label, "Update Paused")
+
+    def test_derive_appmanifest_status_label_remembers_stalled_update_across_plugin_processes(self):
+        state_flags = self.plugin.parse_state_flags(
+            self.plugin.STATE_FLAG_UPDATE_REQUIRED | self.plugin.STATE_FLAG_UPDATE_STARTED
+        )
+        manifest_data = {
+            "bytes_to_download": 420565344,
+            "bytes_downloaded": 179052688,
+            "bytes_to_stage": 541513970,
+            "bytes_staged": 177940262,
+        }
+
+        with TemporaryDirectory() as temp_dir:
+            cache_file = Path(temp_dir) / "cache_download_progress.json"
+            self.plugin.download_progress_cache_file = cache_file
+            with patch("steamflow.local_library.time.time", return_value=100):
+                first_label = self.plugin.derive_appmanifest_status_label("646570", state_flags, manifest_data)
+
+            next_plugin = LocalLogicHarness()
+            next_plugin.download_progress_cache_file = cache_file
+            with patch("steamflow.local_library.time.time", return_value=107):
+                second_label = next_plugin.derive_appmanifest_status_label("646570", state_flags, manifest_data)
+
+        self.assertEqual(first_label, "Updating")
+        self.assertEqual(second_label, "Update Paused")
+
+    def test_derive_appmanifest_status_label_uses_old_manifest_age_on_first_observation(self):
+        state_flags = self.plugin.parse_state_flags(
+            self.plugin.STATE_FLAG_UPDATE_REQUIRED | self.plugin.STATE_FLAG_UPDATE_STARTED
+        )
+        manifest_data = {
+            "bytes_to_download": 420565344,
+            "bytes_downloaded": 179052688,
+            "bytes_to_stage": 541513970,
+            "bytes_staged": 177940262,
+            "modified_at": 90,
+        }
+
+        with patch("steamflow.local_library.time.time", return_value=100):
+            label = self.plugin.derive_appmanifest_status_label("646570", state_flags, manifest_data)
+
+        self.assertEqual(label, "Update Paused")
+
+    def test_resume_hint_temporarily_overrides_stale_paused_manifest_across_plugin_processes(self):
+        state_flags = self.plugin.parse_state_flags(self.plugin.STATE_FLAG_UPDATE_PAUSED)
+        manifest_data = {
+            "bytes_to_download": 420565344,
+            "bytes_downloaded": 179052688,
+            "bytes_to_stage": 541513970,
+            "bytes_staged": 177940262,
+            "modified_at": 90,
+        }
+
+        with TemporaryDirectory() as temp_dir:
+            cache_file = Path(temp_dir) / "cache_download_progress.json"
+            self.plugin.download_progress_cache_file = cache_file
+            with patch("steamflow.local_library.time.time", return_value=100):
+                self.plugin.set_download_control_status_hint("646570", "resume")
+
+            next_plugin = LocalLogicHarness()
+            next_plugin.download_progress_cache_file = cache_file
+            with patch("steamflow.local_library.time.time", return_value=110):
+                label = next_plugin.derive_appmanifest_status_label("646570", state_flags, manifest_data)
+
+        self.assertEqual(label, "Updating")
 
 
 class AchievementDisplayTests(unittest.TestCase):

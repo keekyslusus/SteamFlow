@@ -1,6 +1,26 @@
-import json
-import threading
 import time
+
+from .cache_utils import is_timestamp_fresh, read_json_file, write_json_file
+from .constants import STEAMFLOW_CONFIG
+from .profile_service import (
+    build_avatar_frame_cache_entry,
+    build_no_avatar_frame_cache_entry,
+    compose_framed_avatar_icon,
+    download_binary_file,
+    fetch_avatar_frame_data,
+    fetch_owned_app_ids,
+    fetch_owned_games_refresh_result,
+    fetch_player_summary,
+    build_owned_games_refresh_log_details,
+    get_cached_avatar_frame_state,
+    get_owned_app_state,
+    get_profile_status_label,
+    is_owned_games_cache_fresh,
+    is_profile_summary_for_steamid64,
+    should_schedule_owned_games_refresh,
+)
+from .providers import get_plugin_providers
+from .tasks import get_background_task_manager
 
 try:
     from PIL import Image
@@ -9,23 +29,46 @@ except ImportError:
 
 
 class SteamPluginProfileMixin:
+    CONFIG = STEAMFLOW_CONFIG
+    REQUIRED_PLUGIN_PROVIDERS = (
+        "account",
+        "owned_api",
+        "settings",
+    )
+    REQUIRED_PLUGIN_ATTRS = (
+        "avatar_cache_dir",
+        "avatar_frame_cache_file",
+        "profile_cache_file",
+        "state_lock",
+    )
+    REQUIRED_PLUGIN_METHODS = (
+        "_http_get",
+        "log_exception",
+        "log_slow_call",
+    )
+
+    @property
+    def profile_providers(self):
+        return get_plugin_providers(self)
+
     def load_profile_cache(self):
         if not self.profile_cache_file.exists():
             return {}
-        try:
-            with open(self.profile_cache_file, "r", encoding="utf-8") as file_obj:
-                cache_data = json.load(file_obj)
-            return cache_data if isinstance(cache_data, dict) else {}
-        except Exception:
-            self.log_exception("Failed to load active Steam profile cache")
-            return {}
+        cache_data = read_json_file(
+            self.profile_cache_file,
+            default={},
+            logger=self.log_exception,
+            error_message="Failed to load active Steam profile cache",
+        )
+        return cache_data if isinstance(cache_data, dict) else {}
 
     def save_profile_cache(self, cache_data):
-        try:
-            with open(self.profile_cache_file, "w", encoding="utf-8") as file_obj:
-                json.dump(cache_data, file_obj)
-        except Exception:
-            self.log_exception("Failed to save active Steam profile cache")
+        write_json_file(
+            self.profile_cache_file,
+            cache_data,
+            logger=self.log_exception,
+            error_message="Failed to save active Steam profile cache",
+        )
 
     def ensure_active_profile_summary_loaded(self):
         with self.state_lock:
@@ -37,74 +80,64 @@ class SteamPluginProfileMixin:
             self.active_profile_summary_loaded = True
 
     def active_profile_summary_is_fresh(self):
-        if not self.has_owned_api_key() or not self.is_owned_api_key_bound_to_active_user():
+        account_provider = self.profile_providers.account
+        if not account_provider.has_owned_api_key() or not account_provider.api_key_bound_to_active_user():
             return False
 
         self.ensure_active_profile_summary_loaded()
-        steamid64 = self.get_active_steam_user_steamid64()
+        steamid64 = account_provider.active_steamid64()
         if not steamid64:
             return False
 
         with self.state_lock:
             summary = dict(self.active_profile_summary)
-        if str(summary.get("steamid64", "") or "") != steamid64:
+        if not is_profile_summary_for_steamid64(summary, steamid64):
             return False
-        return (time.time() - float(summary.get("fetched_at", 0) or 0)) < self.PROFILE_SUMMARY_CACHE_TTL_SECONDS
+        return is_timestamp_fresh(summary.get("fetched_at", 0), self.CONFIG.cache.profile_summary_ttl_seconds)
 
     def fetch_active_profile_summary(self, steamid64):
-        api_key = self.get_owned_api_key()
+        api_key = self.profile_providers.account.owned_api_key()
         if not api_key or not steamid64:
             return None
 
         try:
-            api_url = (
-                "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/"
-                f"?key={api_key}&steamids={steamid64}"
+            return fetch_player_summary(
+                api_key,
+                steamid64,
+                self._http_get,
+                timeout=1.2,
             )
-            response = self._http_get(api_url, timeout=1.2, headers={"User-Agent": "Mozilla/5.0"})
-            data = json.loads(response.data.decode("utf-8"))
-            players = data.get("response", {}).get("players", [])
-            if not isinstance(players, list) or not players:
-                return None
-
-            player_data = players[0] if isinstance(players[0], dict) else {}
-            return {
-                "steamid64": steamid64,
-                "personaname": str(player_data.get("personaname", "") or "").strip(),
-                "personastate": int(player_data.get("personastate", 0) or 0),
-                "gameextrainfo": str(player_data.get("gameextrainfo", "") or "").strip(),
-                "fetched_at": time.time(),
-            }
         except Exception:
             self.log_exception("Failed to fetch active Steam profile summary")
             return None
 
     def schedule_active_profile_summary_refresh(self, force=False):
-        if not self.has_owned_api_key() or not self.is_owned_api_key_bound_to_active_user():
+        account_provider = self.profile_providers.account
+        if not account_provider.has_owned_api_key() or not account_provider.api_key_bound_to_active_user():
             return
 
         self.ensure_active_profile_summary_loaded()
         with self.state_lock:
-            if self.pending_profile_summary_refresh:
-                return
             if not force and self.active_profile_summary_is_fresh():
                 return
-            self.pending_profile_summary_refresh = True
-
-        threading.Thread(target=self._refresh_active_profile_summary_worker, daemon=True).start()
+        get_background_task_manager(self).start_flagged_refresh(
+            self,
+            "pending_profile_summary_refresh",
+            self._refresh_active_profile_summary_worker,
+        )
 
     def _refresh_active_profile_summary_worker(self):
         try:
             self.refresh_active_profile_summary()
         finally:
-            with self.state_lock:
-                self.pending_profile_summary_refresh = False
+            get_background_task_manager(self).finish_flagged_refresh(self, "pending_profile_summary_refresh")
 
     def refresh_active_profile_summary(self):
-        if not self.has_owned_api_key() or not self.is_owned_api_key_bound_to_active_user():
+        account_provider = self.profile_providers.account
+        if not account_provider.has_owned_api_key() or not account_provider.api_key_bound_to_active_user():
             return
 
-        steamid64 = self.get_active_steam_user_steamid64()
+        steamid64 = account_provider.active_steamid64()
         if not steamid64:
             return
 
@@ -118,18 +151,19 @@ class SteamPluginProfileMixin:
         self.save_profile_cache(summary)
 
     def get_active_profile_summary(self):
-        if not self.has_owned_api_key() or not self.is_owned_api_key_bound_to_active_user():
+        account_provider = self.profile_providers.account
+        if not account_provider.has_owned_api_key() or not account_provider.api_key_bound_to_active_user():
             return None
 
         self.ensure_active_profile_summary_loaded()
-        steamid64 = self.get_active_steam_user_steamid64()
+        steamid64 = account_provider.active_steamid64()
         if not steamid64:
             return None
 
         with self.state_lock:
             summary = dict(self.active_profile_summary)
 
-        if str(summary.get("steamid64", "") or "") != steamid64:
+        if not is_profile_summary_for_steamid64(summary, steamid64):
             self.schedule_active_profile_summary_refresh(force=True)
             return None
 
@@ -142,55 +176,19 @@ class SteamPluginProfileMixin:
         return summary
 
     def get_active_profile_status(self):
-        summary = self.get_active_profile_summary()
-        if not summary:
-            return ""
-
-        current_game = str(summary.get("gameextrainfo", "") or "").strip()
-        if current_game:
-            return f"Playing {current_game}"
-
-        status_labels = {
-            0: "Offline",
-            1: "Online",
-            2: "Busy",
-            3: "Away",
-            4: "Snooze",
-            5: "Looking to trade",
-            6: "Looking to play",
-        }
-        try:
-            return status_labels.get(int(summary.get("personastate", 0) or 0), "")
-        except (TypeError, ValueError):
-            return ""
+        return get_profile_status_label(self.get_active_profile_summary(), tr=self.tr)
 
     def fetch_owned_app_ids_from_api(self, api_key, steamid64, timeout=3):
-        api_key = self.normalize_steam_web_api_key(api_key)
-        steamid64 = str(steamid64 or "").strip()
-        if not api_key or not steamid64:
-            raise ValueError("Missing Steam API credentials")
-
-        url = (
-            "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/"
-            f"?key={api_key}&steamid={steamid64}&include_played_free_games=1&include_appinfo=0"
+        return fetch_owned_app_ids(
+            api_key,
+            steamid64,
+            self._http_get,
+            normalize_api_key=self.profile_providers.owned_api.normalize_key,
+            timeout=timeout,
         )
-        response = self._http_get(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
-        data = json.loads(response.data.decode("utf-8"))
-        games = data.get("response", {}).get("games", [])
-        if not isinstance(games, list):
-            return set(), {}
 
-        owned_app_ids = set()
-        owned_game_playtimes = {}
-        for game_data in games:
-            app_id = str(game_data.get("appid", "")).strip()
-            if app_id:
-                owned_app_ids.add(app_id)
-                try:
-                    owned_game_playtimes[app_id] = int(game_data.get("playtime_forever", 0) or 0)
-                except (TypeError, ValueError):
-                    owned_game_playtimes[app_id] = 0
-        return owned_app_ids, owned_game_playtimes
+    def should_detect_owned_games_for_profile(self):
+        return self.profile_providers.settings.should_detect_owned_games()
 
     def get_active_steam_avatar_icon(self):
         source_path = self.get_active_steam_avatar_path()
@@ -220,7 +218,7 @@ class SteamPluginProfileMixin:
         if not self.steam_path:
             return None
 
-        steamid64 = self.get_active_steam_user_steamid64()
+        steamid64 = self.profile_providers.account.active_steamid64()
         if not steamid64:
             return None
 
@@ -232,54 +230,45 @@ class SteamPluginProfileMixin:
     def load_avatar_frame_cache(self):
         if not self.avatar_frame_cache_file.exists():
             return {}
-        try:
-            with open(self.avatar_frame_cache_file, "r", encoding="utf-8") as file_obj:
-                cache_data = json.load(file_obj)
-            return cache_data if isinstance(cache_data, dict) else {}
-        except Exception:
-            self.log_exception("Failed to load avatar frame cache")
-            return {}
+        cache_data = read_json_file(
+            self.avatar_frame_cache_file,
+            default={},
+            logger=self.log_exception,
+            error_message="Failed to load avatar frame cache",
+        )
+        return cache_data if isinstance(cache_data, dict) else {}
 
     def save_avatar_frame_cache(self, cache_data):
-        try:
-            with open(self.avatar_frame_cache_file, "w", encoding="utf-8") as file_obj:
-                json.dump(cache_data, file_obj)
-        except Exception:
-            self.log_exception("Failed to save avatar frame cache")
+        write_json_file(
+            self.avatar_frame_cache_file,
+            cache_data,
+            logger=self.log_exception,
+            error_message="Failed to save avatar frame cache",
+        )
 
     def get_active_steam_avatar_frame_path(self):
-        if not self.has_owned_api_key() or not self.is_owned_api_key_bound_to_active_user():
+        account_provider = self.profile_providers.account
+        if not account_provider.has_owned_api_key() or not account_provider.api_key_bound_to_active_user():
             return None
 
-        steamid64 = self.get_active_steam_user_steamid64()
+        steamid64 = account_provider.active_steamid64()
         if not steamid64:
             return None
 
         cache_data = self.load_avatar_frame_cache()
-        cached_steamid64 = str(cache_data.get("steamid64", "") or "")
-        cache_age_seconds = time.time() - float(cache_data.get("timestamp", 0) or 0)
-        cached_image_name = str(cache_data.get("image_name", "") or "")
-        cached_frame_path = self.avatar_cache_dir / cached_image_name if cached_image_name else None
-
-        if (
-            cached_steamid64 == steamid64
-            and cache_age_seconds < 24 * 60 * 60
-            and cached_frame_path
-            and cached_frame_path.exists()
-        ):
+        cached_frame_path, cached_no_frame = get_cached_avatar_frame_state(
+            cache_data,
+            steamid64,
+            self.avatar_cache_dir,
+        )
+        if cached_frame_path:
             return cached_frame_path
-        if cached_steamid64 == steamid64 and cache_age_seconds < 24 * 60 * 60 and cache_data.get("no_frame"):
+        if cached_no_frame:
             return None
 
         frame_data = self.fetch_active_avatar_frame_data(steamid64)
         if not frame_data:
-            self.save_avatar_frame_cache(
-                {
-                    "steamid64": steamid64,
-                    "timestamp": time.time(),
-                    "no_frame": True,
-                }
-            )
+            self.save_avatar_frame_cache(build_no_avatar_frame_cache_entry(steamid64))
             return None
 
         frame_name = f"avatar_frame_{frame_data['communityitemid']}.png"
@@ -287,144 +276,109 @@ class SteamPluginProfileMixin:
         if not frame_path.exists() and not self.download_avatar_frame_image(frame_data["image_url"], frame_path):
             return None
 
-        self.save_avatar_frame_cache(
-            {
-                "steamid64": steamid64,
-                "timestamp": time.time(),
-                "communityitemid": frame_data["communityitemid"],
-                "image_name": frame_name,
-                "image_url": frame_data["image_url"],
-                "frame_name": frame_data.get("name"),
-            }
-        )
+        self.save_avatar_frame_cache(build_avatar_frame_cache_entry(steamid64, frame_data, frame_name))
         return frame_path if frame_path.exists() else None
 
     def fetch_active_avatar_frame_data(self, steamid64):
-        api_key = self.get_owned_api_key()
+        api_key = self.profile_providers.account.owned_api_key()
         if not api_key or not steamid64:
             return None
 
         try:
-            api_url = f"https://api.steampowered.com/IPlayerService/GetAvatarFrame/v1/?key={api_key}&steamid={steamid64}"
-            response = self._http_get(api_url, timeout=1.2, headers={"User-Agent": "Mozilla/5.0"})
-            data = json.loads(response.data.decode("utf-8"))
-            frame_data = data.get("response", {}).get("avatar_frame") or {}
-            communityitemid = str(frame_data.get("communityitemid", "")).strip()
-            image_path = str(frame_data.get("image_small") or frame_data.get("image_large") or "").strip()
-            if not communityitemid or not image_path:
-                return None
-            image_url = image_path
-            if not image_url.startswith("http://") and not image_url.startswith("https://"):
-                image_url = f"https://shared.fastly.steamstatic.com/community_assets/images/{image_url.lstrip('/')}"
-            return {
-                "communityitemid": communityitemid,
-                "image_url": image_url,
-                "name": frame_data.get("name") or frame_data.get("item_title"),
-            }
+            return fetch_avatar_frame_data(api_key, steamid64, self._http_get, timeout=1.2)
         except Exception:
             self.log_exception("Failed to fetch active Steam avatar frame")
             return None
 
     def download_avatar_frame_image(self, image_url, save_path):
         try:
-            response = self._http_get(image_url, timeout=2, headers={"User-Agent": "Mozilla/5.0"})
-            with open(save_path, "wb") as out_file:
-                out_file.write(response.data)
-            return True
+            return download_binary_file(self._http_get, image_url, save_path, timeout=2)
         except Exception:
             self.log_exception(f"Failed to download avatar frame: {image_url}")
             return False
 
     def create_framed_avatar_icon(self, avatar_path, frame_path, output_path):
-        if Image is None:
-            return False
         try:
-            with Image.open(avatar_path) as avatar_image, Image.open(frame_path) as frame_image:
-                avatar_rgba = avatar_image.convert("RGBA")
-                frame_rgba = frame_image.convert("RGBA").resize(avatar_rgba.size, Image.Resampling.LANCZOS)
-                composed = avatar_rgba.copy()
-                composed.alpha_composite(frame_rgba)
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                composed.save(output_path, format="PNG")
-            return output_path.exists()
+            return compose_framed_avatar_icon(avatar_path, frame_path, output_path, Image)
         except Exception:
             self.log_exception(f"Failed to compose framed avatar icon from {avatar_path}")
             return False
 
     def owned_games_cache_is_fresh(self):
-        if not self.is_owned_api_key_bound_to_active_user():
+        account_provider = self.profile_providers.account
+        if not account_provider.api_key_bound_to_active_user():
             return False
         with self.state_lock:
-            if not self.owned_games_cache_loaded:
-                return False
-            if not self.owned_games_last_sync:
-                return False
-            if self.owned_games_steamid64 != self.get_active_steam_user_steamid64():
-                return False
-            return (time.time() - self.owned_games_last_sync) < self.OWNED_GAMES_CACHE_TTL_SECONDS
+            return is_owned_games_cache_fresh(
+                self.owned_games_cache_loaded,
+                self.owned_games_steamid64,
+                account_provider.active_steamid64(),
+                self.owned_games_last_sync,
+                self.CONFIG.cache.owned_games_cache_ttl_seconds,
+                is_timestamp_fresh,
+            )
 
     def schedule_owned_games_refresh(self, force=False):
-        if not self.should_detect_owned_games() or not self.is_owned_api_key_bound_to_active_user():
+        if not self.should_detect_owned_games_for_profile() or not self.profile_providers.account.api_key_bound_to_active_user():
             return
 
+        now = time.time()
         with self.state_lock:
-            if self.pending_owned_games_refresh:
+            should_schedule = should_schedule_owned_games_refresh(
+                force,
+                now,
+                self.owned_games_last_attempt,
+                self.CONFIG.cache.owned_games_retry_delay_seconds,
+                self.owned_games_cache_is_fresh,
+            )
+            if not should_schedule:
                 return
-            if not force and (time.time() - self.owned_games_last_attempt) < self.OWNED_GAMES_RETRY_DELAY_SECONDS:
-                return
-            if not force and self.owned_games_cache_is_fresh():
-                return
-            self.pending_owned_games_refresh = True
-            self.owned_games_last_attempt = time.time()
-
-        threading.Thread(target=self._refresh_owned_games_worker, daemon=True).start()
+            self.owned_games_last_attempt = now
+        get_background_task_manager(self).start_flagged_refresh(
+            self,
+            "pending_owned_games_refresh",
+            self._refresh_owned_games_worker,
+        )
 
     def _refresh_owned_games_worker(self):
         try:
             self.refresh_owned_games_cache()
         finally:
-            with self.state_lock:
-                self.pending_owned_games_refresh = False
+            get_background_task_manager(self).finish_flagged_refresh(self, "pending_owned_games_refresh")
 
     def refresh_owned_games_cache(self):
-        if not self.should_detect_owned_games() or not self.is_owned_api_key_bound_to_active_user():
+        account_provider = self.profile_providers.account
+        if not self.should_detect_owned_games_for_profile() or not account_provider.api_key_bound_to_active_user():
             return
 
-        steamid64 = self.get_active_steam_user_steamid64()
-        api_key = self.get_owned_api_key()
+        steamid64 = account_provider.active_steamid64()
+        api_key = account_provider.owned_api_key()
         if not steamid64:
-            self.clear_owned_games_cache()
+            self.profile_providers.owned_api.clear_owned_games_cache()
             return
         if not api_key:
             return
 
         start_time = time.perf_counter()
-        fetch_succeeded = False
-        owned_app_ids = set()
-        owned_game_playtimes = {}
-        try:
-            owned_app_ids, owned_game_playtimes = self.fetch_owned_app_ids_from_api(api_key, steamid64, timeout=3)
-            fetch_succeeded = True
-        except Exception as error:
-            if not isinstance(
-                error,
-                (
-                    self.urllib3.exceptions.TimeoutError,
-                    self.urllib3.exceptions.HTTPError,
-                    json.JSONDecodeError,
-                ),
-            ):
-                self.log_exception("Failed to refresh owned Steam games")
+        refresh_result = fetch_owned_games_refresh_result(
+            self.fetch_owned_app_ids_from_api,
+            api_key,
+            steamid64,
+            self.urllib3,
+            timeout=3,
+        )
+        if refresh_result["should_log_error"]:
+            self.log_exception("Failed to refresh owned Steam games")
 
-        if fetch_succeeded:
+        if refresh_result["success"]:
             with self.state_lock:
                 self.owned_games_last_sync = time.time()
                 self.owned_games_public_profile = True
                 self.owned_games_steamid64 = steamid64
-                self.owned_app_ids = owned_app_ids
-                self.owned_game_playtimes = owned_game_playtimes
+                self.owned_app_ids = refresh_result["owned_app_ids"]
+                self.owned_game_playtimes = refresh_result["owned_game_playtimes"]
                 self.owned_games_cache_loaded = True
-            self.save_owned_games_cache()
+            self.profile_providers.owned_api.save_owned_games_cache()
         else:
             with self.state_lock:
                 if self.owned_games_steamid64 != steamid64:
@@ -433,34 +387,55 @@ class SteamPluginProfileMixin:
         self.log_slow_call(
             "refresh_owned_games_cache",
             (time.perf_counter() - start_time) * 1000,
-            f"steamid64={steamid64} count={len(owned_app_ids)} success={fetch_succeeded}",
+            build_owned_games_refresh_log_details(
+                steamid64,
+                refresh_result["owned_app_ids"],
+                refresh_result["success"],
+            ),
         )
 
     def is_owned_app(self, app_id):
-        if not self.should_detect_owned_games() or not app_id or not self.is_owned_api_key_bound_to_active_user():
+        account_provider = self.profile_providers.account
+        if not self.should_detect_owned_games_for_profile() or not app_id or not account_provider.api_key_bound_to_active_user():
             return False
 
         app_id = str(app_id)
+        active_steamid64 = account_provider.active_steamid64()
         with self.state_lock:
-            if self.owned_games_steamid64 == self.get_active_steam_user_steamid64() and app_id in self.owned_app_ids:
-                return True
+            ownership_state = get_owned_app_state(
+                app_id,
+                self.owned_games_steamid64,
+                active_steamid64,
+                self.owned_app_ids,
+                cache_is_fresh=False,
+            )
+        if ownership_state == "owned":
+            return True
 
         if not self.owned_games_cache_is_fresh():
             self.schedule_owned_games_refresh()
         return False
 
     def get_active_account_ownership_state(self, app_id):
-        if not self.should_detect_owned_games() or not app_id or not self.is_owned_api_key_bound_to_active_user():
+        account_provider = self.profile_providers.account
+        if not self.should_detect_owned_games_for_profile() or not app_id or not account_provider.api_key_bound_to_active_user():
             return "unknown"
 
         app_id = str(app_id)
-        active_steamid64 = self.get_active_steam_user_steamid64()
+        active_steamid64 = account_provider.active_steamid64()
         with self.state_lock:
-            if self.owned_games_steamid64 == active_steamid64 and app_id in self.owned_app_ids:
-                return "owned"
+            cache_steamid64 = self.owned_games_steamid64
+            owned_app_ids = set(self.owned_app_ids)
 
-        if self.owned_games_cache_is_fresh():
-            return "not_owned"
+        ownership_state = get_owned_app_state(
+            app_id,
+            cache_steamid64,
+            active_steamid64,
+            owned_app_ids,
+            cache_is_fresh=self.owned_games_cache_is_fresh(),
+        )
+        if ownership_state != "unknown":
+            return ownership_state
 
         self.schedule_owned_games_refresh()
         return "unknown"

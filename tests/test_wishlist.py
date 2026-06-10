@@ -12,13 +12,14 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(LIB_PATH) not in sys.path:
     sys.path.insert(0, str(LIB_PATH))
 
-from tests._flox_stub import install_flox_stub
+from tests._pyflowlauncher_stub import install_pyflowlauncher_stub
 
-install_flox_stub(include_clipboard=True)
+install_pyflowlauncher_stub()
 
 from steamflow.storage import SteamPluginStorageMixin
 from steamflow.ui_commands import SteamPluginUICommandsMixin
 from steamflow.wishlist import SteamPluginWishlistMixin
+from steamflow.constants import STEAMFLOW_CONFIG
 
 
 class WishlistHarness(SteamPluginWishlistMixin, SteamPluginStorageMixin, SteamPluginUICommandsMixin):
@@ -45,7 +46,12 @@ class WishlistHarness(SteamPluginWishlistMixin, SteamPluginStorageMixin, SteamPl
         self.fetch_calls = []
         self.scheduled_refreshes = []
         self.started_workers = []
+        self.started_mutation_workers = []
         self.metadata_by_app_id = {}
+        self.enabled_features = {
+            "steam_session_token": True,
+            "steam_wishlist": True,
+        }
 
     def _read_json_file(self, path, error_message):
         with open(path, "r", encoding="utf-8") as file_obj:
@@ -81,8 +87,15 @@ class WishlistHarness(SteamPluginWishlistMixin, SteamPluginStorageMixin, SteamPl
     def schedule_wishlist_refresh(self, force=False):
         self.scheduled_refreshes.append(force)
 
-    def start_wishlist_hydration_worker(self, wishlist_items):
-        self.started_workers.append([item["appid"] for item in wishlist_items])
+    def start_wishlist_hydration_worker(self, wishlist_items, force=False):
+        self.started_workers.append(([item["appid"] for item in wishlist_items], force))
+        return True
+
+    def start_steam_wishlist_mutation_worker(self, steamid64, app_id, action):
+        self.started_mutation_workers.append((steamid64, app_id, action))
+
+    def feature_enabled(self, name):
+        return self.enabled_features.get(str(name), True)
 
     def build_result(self, title, subtitle, icon_path=None, action=None, context_data=None, **extra_fields):
         result = {
@@ -189,10 +202,10 @@ class WishlistTests(unittest.TestCase):
             self.assertEqual(results[0]["Title"], "Syncing Steam Wishlist")
             self.assertEqual(
                 results[0]["action"],
-                {"method": "open_my_steam_wishlist", "parameters": []},
+                {"method": "sync_steam_wishlist_details", "parameters": [], "dontHideAfterAction": True},
             )
             self.assertEqual(results[1]["Title"], "\U0001F6D2 Newer")
-            self.assertEqual(harness.started_workers, [["10"]])
+            self.assertEqual(harness.started_workers, [(["10"], False)])
 
     def test_build_wishlist_results_filters_loaded_titles_by_query(self):
         with TemporaryDirectory() as temp_dir:
@@ -214,6 +227,18 @@ class WishlistTests(unittest.TestCase):
             results = harness.build_wishlist_results("final")
 
             self.assertEqual(results[0]["Title"], "Syncing Steam Wishlist For 'final'")
+
+    def test_sync_steam_wishlist_details_force_retries_missing_metadata(self):
+        with TemporaryDirectory() as temp_dir:
+            harness = WishlistHarness(temp_dir)
+            harness.metadata_by_app_id = {
+                "20": {"name": "Loaded", "type": "game", "is_free": False, "platforms": {}, "has_price": False, "price": None},
+            }
+
+            message = harness.sync_steam_wishlist_details()
+
+            self.assertEqual(message, "Steam wishlist details sync started for 1 missing games")
+            self.assertEqual(harness.started_workers, [(["10"], True)])
 
     def test_build_wishlist_results_uses_unavailable_result_without_api_key(self):
         with TemporaryDirectory() as temp_dir:
@@ -267,7 +292,9 @@ class WishlistTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             harness = WishlistHarness(temp_dir)
 
-            result = harness.build_wishlist_unavailable_result("No active Steam account found")
+            result = harness.build_wishlist_unavailable_result(
+                STEAMFLOW_CONFIG.availability_reasons.no_active_account
+            )
 
             self.assertIsNone(result["action"])
 
@@ -284,6 +311,63 @@ class WishlistTests(unittest.TestCase):
             self.assertIsNone(error)
             self.assertEqual(items[0]["appid"], "10")
             self.assertEqual(harness.scheduled_refreshes, [False])
+
+    def test_add_to_steam_wishlist_updates_cache_and_starts_worker(self):
+        with TemporaryDirectory() as temp_dir:
+            harness = WishlistHarness(temp_dir)
+            harness.wishlist_cache_loaded = True
+            harness.wishlist_items = [{"appid": "10", "date_added": 100, "priority": 0}]
+            harness.wishlist_steamid64 = harness.active_steamid64
+
+            message = harness.add_to_steam_wishlist("20")
+
+            self.assertEqual(message, "Adding App ID 20 to Steam wishlist")
+            self.assertEqual(
+                harness.started_mutation_workers,
+                [(harness.active_steamid64, "20", "add")],
+            )
+            self.assertTrue(harness.is_wishlisted_app("20"))
+            self.assertEqual(harness.scheduled_refreshes, [True])
+
+    def test_add_to_steam_wishlist_returns_already_added_when_cache_contains_app(self):
+        with TemporaryDirectory() as temp_dir:
+            harness = WishlistHarness(temp_dir)
+            harness.wishlist_cache_loaded = True
+            harness.wishlist_items = [{"appid": "10", "date_added": 100, "priority": 0}]
+            harness.wishlist_steamid64 = harness.active_steamid64
+
+            message = harness.add_to_steam_wishlist("10")
+
+            self.assertEqual(message, "Already in Steam wishlist")
+            self.assertEqual(harness.started_mutation_workers, [])
+            self.assertEqual(harness.scheduled_refreshes, [])
+
+    def test_remove_from_steam_wishlist_updates_cache_and_starts_worker(self):
+        with TemporaryDirectory() as temp_dir:
+            harness = WishlistHarness(temp_dir)
+            harness.wishlist_cache_loaded = True
+            harness.wishlist_items = [{"appid": "10", "date_added": 100, "priority": 0}]
+            harness.wishlist_steamid64 = harness.active_steamid64
+
+            message = harness.remove_from_steam_wishlist("10")
+
+            self.assertEqual(message, "Removing App ID 10 from Steam wishlist")
+            self.assertEqual(
+                harness.started_mutation_workers,
+                [(harness.active_steamid64, "10", "remove")],
+            )
+            self.assertFalse(harness.is_wishlisted_app("10"))
+            self.assertEqual(harness.scheduled_refreshes, [True])
+
+    def test_add_to_steam_wishlist_returns_unavailable_when_wishlist_feature_disabled(self):
+        with TemporaryDirectory() as temp_dir:
+            harness = WishlistHarness(temp_dir)
+            harness.enabled_features["steam_wishlist"] = False
+
+            message = harness.add_to_steam_wishlist("20")
+
+            self.assertEqual(message, "Steam wishlist integration is temporarily unavailable")
+            self.assertEqual(harness.started_mutation_workers, [])
 
 
 if __name__ == "__main__":

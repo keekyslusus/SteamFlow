@@ -1,8 +1,6 @@
-#!/usr/bin/env python
 import base64
 import logging
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -16,12 +14,16 @@ lib_path = plugindir / "lib"
 if str(lib_path) not in sys.path:
     sys.path.insert(0, str(lib_path))
 
-import vdf
-
-try:
-    import winreg
-except ImportError:
-    import _winreg as winreg
+from steamflow.account_switcher import (
+    set_steam_registry_autologin_user as set_steam_registry_autologin_user_in_registry,
+)
+from steamflow.account_service import (
+    get_loginusers_backup_path as get_loginusers_backup_path_for_file,
+    get_loginusers_path as get_loginusers_path_for_steam_path,
+    load_loginusers_file,
+    save_loginusers_file,
+    set_loginusers_autologin_account_data,
+)
 
 
 LOG_FILE = plugindir / "steam_switch_worker.log"
@@ -224,12 +226,11 @@ def terminate_steam_processes():
 
 
 def get_loginusers_path(steam_path):
-    path = steam_path / "config" / "loginusers.vdf"
-    return path if path.exists() else None
+    return get_loginusers_path_for_steam_path(steam_path)
 
 
 def get_loginusers_backup_path(loginusers_path):
-    return loginusers_path.with_name(f"{loginusers_path.name}_last")
+    return get_loginusers_backup_path_for_file(loginusers_path)
 
 
 def load_loginusers_data(loginusers_path):
@@ -237,56 +238,33 @@ def load_loginusers_data(loginusers_path):
         if not candidate_path or not candidate_path.exists():
             continue
         try:
-            with open(candidate_path, "r", encoding="utf-8", errors="ignore") as file_obj:
-                parsed = vdf.load(file_obj)
-            users = parsed.get("users")
-            if not isinstance(users, dict):
-                parsed["users"] = {}
-            return parsed
+            return load_loginusers_file(candidate_path)
         except Exception:
             logger.exception("Failed to load loginusers data from %s", candidate_path)
     return {}
 
 
 def save_loginusers_data(loginusers_path, data):
-    backup_path = get_loginusers_backup_path(loginusers_path)
-    temp_path = loginusers_path.with_name(f"{loginusers_path.name}.tmp")
-
-    if loginusers_path.exists():
-        shutil.copy2(loginusers_path, backup_path)
-
-    with open(temp_path, "w", encoding="utf-8", newline="\n") as file_obj:
-        vdf.dump(data, file_obj, pretty=True)
-        file_obj.flush()
-        os.fsync(file_obj.fileno())
-    temp_path.replace(loginusers_path)
+    save_loginusers_file(
+        loginusers_path,
+        data,
+        backup_path=get_loginusers_backup_path(loginusers_path),
+        sync=True,
+    )
 
 
 def set_loginusers_autologin_account(loginusers_path, steamid64):
     target_steamid64 = str(steamid64 or "").strip()
     data = load_loginusers_data(loginusers_path)
-    users = data.get("users", {})
-    if not isinstance(users, dict) or target_steamid64 not in users:
+    normalized_user_data = set_loginusers_autologin_account_data(data, target_steamid64)
+    if normalized_user_data is None:
         return None
-
-    for current_steamid64, raw_user_data in list(users.items()):
-        user_data = raw_user_data if isinstance(raw_user_data, dict) else {}
-        user_data["MostRecent"] = "1" if current_steamid64 == target_steamid64 else "0"
-        if current_steamid64 == target_steamid64:
-            user_data["AllowAutoLogin"] = "1"
-            user_data["RememberPassword"] = "1"
-        users[current_steamid64] = user_data
-
     save_loginusers_data(loginusers_path, data)
-    normalized_user_data = users.get(target_steamid64, {})
-    return normalized_user_data if isinstance(normalized_user_data, dict) else {}
+    return normalized_user_data
 
 
 def set_steam_registry_autologin_user(account_name):
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
-        winreg.SetValueEx(key, "AutoLoginUser", 0, winreg.REG_SZ, str(account_name or ""))
-        winreg.SetValueEx(key, "RememberPassword", 0, winreg.REG_DWORD, 1)
-        winreg.FlushKey(key)
+    set_steam_registry_autologin_user_in_registry(account_name, flush=True)
 
 
 def launch_steam_client(steam_path):

@@ -7,6 +7,20 @@
 </div>
 
 <p align="center">
+<img src="https://hatscripts.github.io/circle-flags/flags/uk.svg" width="24"/>
+<img src="https://hatscripts.github.io/circle-flags/flags/de.svg" width="24"/>
+<img src="https://hatscripts.github.io/circle-flags/flags/es.svg" width="24"/>
+<img src="https://hatscripts.github.io/circle-flags/flags/fr.svg" width="24"/>
+<img src="https://hatscripts.github.io/circle-flags/flags/jp.svg" width="24"/>
+<img src="https://hatscripts.github.io/circle-flags/flags/kr.svg" width="24"/>
+<img src="https://hatscripts.github.io/circle-flags/flags/pl.svg" width="24"/>
+<img src="https://hatscripts.github.io/circle-flags/flags/br.svg" width="24"/>
+<img src="https://hatscripts.github.io/circle-flags/flags/ru.svg" width="24"/>
+<img src="https://hatscripts.github.io/circle-flags/flags/cn.svg" width="24"/>
+<img src="https://hatscripts.github.io/circle-flags/flags/tw.svg" width="24"/>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/github/downloads/keekyslusus/SteamFlow/total?style=flat-square&color=black&labelColor=blue">
   <img src="https://img.shields.io/github/stars/keekyslusus/SteamFlow?style=flat-square&color=black&labelColor=blue">
   <img src="https://img.shields.io/github/last-commit/keekyslusus/SteamFlow?style=flat-square&color=black&labelColor=blue">
@@ -23,6 +37,8 @@
 
 `steam ?`
 `steam api`
+`steam top`
+`steam deals`
 `steam status`
 `steam switch`
 `steam wishlist`
@@ -34,7 +50,7 @@
 
 - Launch installed games directly from Flow Launcher
 - Shows playtime, last played date, and achievement progress
-- Live install/update status badges
+- Display game update status and control downloads (pause/resume updates)
 - Sorted by most recently played
 
 
@@ -43,6 +59,7 @@
 
 - Search the Steam store by game name
 - Shows review score, concurrent player count, price, and release date
+- Browse Steam top sellers (`steam top`) and specials (`steam deals`)
 - Owned games opens directly in your library
 
 
@@ -57,13 +74,15 @@
 ### Adaptive context menu
 <img src=".github/contextmenu.png" width="500">
 
-- Open store page in Steam or [SteamDB](https://steamdb.info/)
+- Open store page in Steam/[SteamDB](https://steamdb.info/)/[CS.RIN](https://cs.rin.ru/forum/viewforum.php?f=10)
 - Open Community Guides and Discussions
 - Open Recordings & Screenshots folder
 - Open game Properties
 - Browse local game files
 - Check refund eligibility
-- Install or Uninstall game
+- Add games to Steam shopping cart
+- Add/remove games from Steam wishlist
+- Install/Uninstall game
 
 
 ### Steam status
@@ -80,16 +99,13 @@
 
 ### Steam Web API
 
-> API key is encrypted with Windows DPAPI and bound to your Steam account.
+> API key is encrypted and bound to active Steam account
 
 - Detects owned games from store search
 - Enables wishlist browsing
-- Shows your active profile status (Online, playing a game, etc.)
+- Shows your active profile status
 
 
 ## Installation
+
 type `pm install SteamFlow by keekys`in FlowLauncher
-
-or
-
-Unzip [archive](https://github.com/keekyslusus/SteamFlow/releases/latest) to `%appdata%\FlowLauncher\Plugins`

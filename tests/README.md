@@ -1,4 +1,4 @@
-# These tests are ass
+# These tests are ass (codex tests!)
 
 ```bash
 python -m pytest -q

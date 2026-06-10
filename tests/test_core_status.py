@@ -25,6 +25,7 @@ class CoreStatusHarness(SteamPluginCoreMixin):
     def __init__(self):
         self.active_steamid64 = "76561198000000000"
         self.active_user_details = {"persona_name": "ActiveUser", "account_name": "activeuser"}
+        self.settings = {"language": "English"}
         self.owned_api_key_present = False
         self.owned_api_key_bound_steamid64 = None
         self.owned_api_key_persona_name = None
@@ -42,6 +43,17 @@ class CoreStatusHarness(SteamPluginCoreMixin):
 
 
 class CoreStatusTests(unittest.TestCase):
+    def test_platform_labels_are_hidden_by_default(self):
+        harness = CoreStatusHarness()
+
+        self.assertFalse(harness.should_show_platforms())
+
+    def test_owned_games_detection_cannot_be_disabled_by_settings(self):
+        harness = CoreStatusHarness()
+        harness.settings["detect_owned_games"] = False
+
+        self.assertTrue(harness.should_detect_owned_games())
+
     def test_status_uses_not_configured_when_key_is_missing(self):
         harness = CoreStatusHarness()
 
@@ -72,36 +84,6 @@ class CoreStatusTests(unittest.TestCase):
 
         self.assertEqual(title, "Steam API Connected")
         self.assertIn("Bound to ActiveUser", subtitle)
-
-
-class AddResultHarness(SteamPluginCoreMixin):
-    DEFAULT_ICON = "default"
-    action_keyword = "steam"
-
-    @property
-    def app_settings(self):
-        raise FileNotFoundError("Flow Launcher settings are unavailable")
-
-    @property
-    def user_keyword(self):
-        raise AssertionError("flox user_keyword must not be used as a fallback")
-
-    def add_item(self, **item):
-        self.item = item
-
-
-class AddResultTests(unittest.TestCase):
-    def test_plugindir_does_not_depend_on_working_directory(self):
-        harness = AddResultHarness()
-
-        self.assertEqual(Path(harness.plugindir), PROJECT_ROOT)
-
-    def test_add_result_supplies_autocomplete_without_flox_app_settings(self):
-        harness = AddResultHarness()
-
-        harness.add_result({"Title": "Portal 2"})
-
-        self.assertEqual(harness.item["auto_complete_text"], "steam Portal 2")
 
 
 if __name__ == "__main__":

@@ -26,6 +26,27 @@ class SteamSwitchWorkerLaunchTests(unittest.TestCase):
         mocked_startfile.assert_called_once_with(steam_switch_worker.STEAM_GAMES_URI)
         mocked_popen.assert_not_called()
 
+    def test_set_loginusers_autologin_account_updates_data_and_saves(self):
+        loginusers_data = {
+            "users": {
+                "76561198000000000": {"MostRecent": "0", "AccountName": "alpha"},
+                "76561198000000001": {"MostRecent": "1", "AccountName": "beta"},
+            }
+        }
+
+        with patch.object(steam_switch_worker, "load_loginusers_data", return_value=loginusers_data), patch.object(
+            steam_switch_worker, "save_loginusers_data"
+        ) as mocked_save:
+            updated_user = steam_switch_worker.set_loginusers_autologin_account(
+                Path("C:/Steam/config/loginusers.vdf"),
+                "76561198000000000",
+            )
+
+        self.assertEqual(updated_user["AccountName"], "alpha")
+        self.assertEqual(loginusers_data["users"]["76561198000000000"]["MostRecent"], "1")
+        self.assertEqual(loginusers_data["users"]["76561198000000001"]["MostRecent"], "0")
+        mocked_save.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

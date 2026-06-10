@@ -1,116 +1,54 @@
-import json
-import time
-import urllib.request
 from functools import cached_property
 from pathlib import Path
 
-from flox import Flox
-
 from .actions import SteamPluginActionsMixin
-from .menu import get_game_context_menu_entries, get_steam_client_context_menu_entries
-
-try:
-    import winreg
-except ImportError:
-    import _winreg as winreg
+from .app_details import (
+    APP_DETAILS_CACHE_DIR_NAME,
+    AppDetailsMetadataProvider,
+    MetricAppDetailsCache,
+    fetch_app_details_metadata_with_urlopen,
+)
+from .cart import SteamPluginCartMixin
+from .feature_health import feature_enabled
+from .hooks import get_secure_settings_dir
+from .localization import Localizer, plugin_tr, resolve_configured_locale
+from .menu import (
+    get_game_context_menu_entries,
+    get_steam_client_context_menu_entries,
+    is_store_action_result_source,
+    is_store_cart_result_source,
+)
+from .os_integration import resolve_steam_install_path_from_registry
+from .pyflow_compat import SteamFlowPluginBase
+from .wishlist_mutation_service import start_steam_wishlist_mutation_worker_process
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 UNSET = object()
 
 
-class SteamContextMenuPlugin(SteamPluginActionsMixin, Flox):
+class SteamContextMenuPlugin(SteamPluginCartMixin, SteamPluginActionsMixin, SteamFlowPluginBase):
     @cached_property
-    def metric_cache_file(self):
-        return self.plugin_dir / "cache_metric.json"
+    def app_details_cache_store(self):
+        return MetricAppDetailsCache(self.plugin_dir / APP_DETAILS_CACHE_DIR_NAME)
 
     @cached_property
-    def app_details_cache(self):
-        return self._read_app_details_cache()
-
-    def _read_app_details_cache(self):
-        if not self.metric_cache_file.exists():
-            return {}
-        try:
-            with open(self.metric_cache_file, "r", encoding="utf-8") as file_obj:
-                cache_data = json.load(file_obj)
-            app_details_cache = cache_data.get("app_details_cache", {})
-            return app_details_cache if isinstance(app_details_cache, dict) else {}
-        except Exception:
-            return {}
-
-    def _write_app_details_cache_entry(self, app_id, metadata, success):
-        if not app_id:
-            return
-        cache_data = {}
-        if self.metric_cache_file.exists():
-            try:
-                with open(self.metric_cache_file, "r", encoding="utf-8") as file_obj:
-                    loaded = json.load(file_obj)
-                if isinstance(loaded, dict):
-                    cache_data = loaded
-            except Exception:
-                cache_data = {}
-
-        app_details_cache = cache_data.get("app_details_cache", {})
-        if not isinstance(app_details_cache, dict):
-            app_details_cache = {}
-        app_details_cache[str(app_id)] = {
-            "timestamp": time.time(),
-            "success": bool(success),
-            "metadata": dict(metadata or {}),
-        }
-        cache_data["app_details_cache"] = app_details_cache
-        try:
-            with open(self.metric_cache_file, "w", encoding="utf-8") as file_obj:
-                json.dump(cache_data, file_obj)
-            self.__dict__["app_details_cache"] = app_details_cache
-        except Exception:
-            return
+    def app_details_provider(self):
+        return AppDetailsMetadataProvider(
+            self.fetch_app_details_metadata,
+            cache=self.app_details_cache_store,
+        )
 
     def fetch_app_details_metadata(self, app_id):
-        app_id = str(app_id or "").strip()
-        if not app_id:
-            return None
-
         try:
-            request = urllib.request.Request(
-                f"https://store.steampowered.com/api/appdetails?appids={app_id}&l=en",
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            with urllib.request.urlopen(request, timeout=0.5) as response:
-                data = json.loads(response.read().decode("utf-8"))
-            app_details = data.get(app_id, {})
-            if not isinstance(app_details, dict) or not app_details.get("success"):
-                return None
-
-            details = app_details.get("data", {})
-            if not isinstance(details, dict):
-                return None
-
-            raw_is_free = details.get("is_free")
-            if isinstance(raw_is_free, bool):
-                is_free = raw_is_free
-            elif raw_is_free in (0, 1):
-                is_free = bool(raw_is_free)
-            else:
-                is_free = None
-
-            return {
-                "type": str(details.get("type", "") or "").strip().lower(),
-                "is_free": is_free,
-                "coming_soon": bool((details.get("release_date") or {}).get("coming_soon")),
-            }
+            return fetch_app_details_metadata_with_urlopen(app_id, timeout=0.5)
         except Exception:
             return None
 
     def get_cached_app_details_metadata(self, app_id):
-        if not app_id:
-            return None
-        cache_entry = self.app_details_cache.get(str(app_id))
-        if not isinstance(cache_entry, dict) or not cache_entry.get("success"):
-            return None
-        metadata = cache_entry.get("metadata")
-        return metadata if isinstance(metadata, dict) else None
+        return self.app_details_provider.get_cached_metadata(app_id)
+
+    def get_context_app_details_metadata(self, app_id):
+        return self.app_details_provider.get_metadata(app_id)
 
     def derive_is_unreleased(self, data):
         if data.get("install_path"):
@@ -126,10 +64,7 @@ class SteamContextMenuPlugin(SteamPluginActionsMixin, Flox):
         if not app_id:
             return False
 
-        metadata = self.get_cached_app_details_metadata(app_id)
-        if not metadata:
-            metadata = self.fetch_app_details_metadata(app_id)
-            self._write_app_details_cache_entry(app_id, metadata, success=metadata is not None)
+        metadata = self.get_context_app_details_metadata(app_id)
         if not metadata:
             return False
         return bool(metadata.get("coming_soon"))
@@ -155,10 +90,7 @@ class SteamContextMenuPlugin(SteamPluginActionsMixin, Flox):
         if playtime_minutes is not None and playtime_minutes >= 120:
             return ""
 
-        metadata = self.get_cached_app_details_metadata(app_id)
-        if not metadata:
-            metadata = self.fetch_app_details_metadata(app_id)
-            self._write_app_details_cache_entry(app_id, metadata, success=metadata is not None)
+        metadata = self.get_context_app_details_metadata(app_id)
         if not metadata:
             return ""
         if metadata.get("type") != "game" or metadata.get("is_free") is not False:
@@ -174,8 +106,11 @@ class SteamContextMenuPlugin(SteamPluginActionsMixin, Flox):
         super().__init__()
         self.plugin_dir = PACKAGE_ROOT
         self._steam_path = UNSET
+        self.buy_icon = str(self.plugin_dir / "icons" / "buy.png")
         self.community_icon = str(self.plugin_dir / "icons" / "community.png")
+        self.csrin_icon = str(self.plugin_dir / "icons" / "csrin.png")
         self.default_icon = str(self.plugin_dir / "icons" / "steam.png")
+        self.deals_icon = str(self.plugin_dir / "icons" / "deals.png")
         self.discussions_icon = str(self.plugin_dir / "icons" / "discussions.png")
         self.download_icon = str(self.plugin_dir / "icons" / "download.png")
         self.guides_icon = str(self.plugin_dir / "icons" / "guides.png")
@@ -185,19 +120,16 @@ class SteamContextMenuPlugin(SteamPluginActionsMixin, Flox):
         self.screenshot_icon = str(self.plugin_dir / "icons" / "screenshot.png")
         self.settings_icon = str(self.plugin_dir / "icons" / "settings.png")
         self.steamdb_icon = str(self.plugin_dir / "icons" / "steamdb.png")
+        self.top_sellers_icon = str(self.plugin_dir / "icons" / "top_sellers.png")
         self.trash_icon = str(self.plugin_dir / "icons" / "trash.png")
+        self.wishlist_icon = str(self.plugin_dir / "icons" / "wishlist.png")
+        self.wishlist_add_icon = str(self.plugin_dir / "icons" / "wl_add.png")
+        self.wishlist_remove_icon = str(self.plugin_dir / "icons" / "wl_remove.png")
+        self.feature_health_cache_file = self.plugin_dir / "cache_feature_health.json"
 
     @cached_property
     def logfile(self):
         return str(self.plugin_dir / "plugin_steamflow.log")
-
-    @property
-    def plugindir(self):
-        return str(PACKAGE_ROOT)
-
-    @property
-    def user_keyword(self):
-        return str(getattr(self, "action_keyword", "") or "steam").strip()
 
     @property
     def steam_path(self):
@@ -206,21 +138,7 @@ class SteamContextMenuPlugin(SteamPluginActionsMixin, Flox):
         return self._steam_path
 
     def _find_steam_path(self):
-        paths_to_try = [
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam"),
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Valve\Steam"),
-            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Valve\Steam"),
-        ]
-        for hkey, path in paths_to_try:
-            try:
-                with winreg.OpenKey(hkey, path) as key:
-                    steam_path, _ = winreg.QueryValueEx(key, "InstallPath")
-                steam_path = Path(steam_path)
-                if steam_path.exists():
-                    return steam_path
-            except Exception:
-                continue
-        return None
+        return resolve_steam_install_path_from_registry()
 
     def _add_menu_entries(self, entries):
         for entry in entries:
@@ -230,8 +148,47 @@ class SteamContextMenuPlugin(SteamPluginActionsMixin, Flox):
                 icon=entry["icon"],
                 method=entry["method"],
                 parameters=entry.get("parameters"),
-                auto_complete_text=entry["title"],
             )
+
+    def get_language(self):
+        return resolve_configured_locale(self.settings.get("language", "auto"))
+
+    def tr(self, key, default=None, **values):
+        return Localizer(self.get_language()).tr(key, default=default, **values)
+
+    def start_steam_wishlist_mutation_worker(self, steamid64, app_id, action):
+        start_steam_wishlist_mutation_worker_process(
+            self.plugin_dir,
+            get_secure_settings_dir(self),
+            steamid64,
+            app_id,
+            action,
+        )
+
+    def mutate_steam_wishlist(self, app_id, action, steamid64=None):
+        app_id = str(app_id or "").strip()
+        action = str(action or "").strip().lower()
+        steamid64 = str(steamid64 or "").strip()
+        if not app_id:
+            return plugin_tr(self, "action.missing_app_id")
+        if not steamid64:
+            return plugin_tr(self, "action.no_active_account")
+        if action not in {"add", "remove"}:
+            return plugin_tr(self, "wishlist.mutation_failed", error=f"Unsupported action: {action}")
+
+        try:
+            self.start_steam_wishlist_mutation_worker(steamid64, app_id, action)
+            if action == "add":
+                return plugin_tr(self, "wishlist.adding", app_id=app_id)
+            return plugin_tr(self, "wishlist.removing", app_id=app_id)
+        except Exception as error:
+            return plugin_tr(self, "wishlist.mutation_failed", error=str(error))
+
+    def add_to_steam_wishlist(self, app_id, steamid64=None):
+        return self.mutate_steam_wishlist(app_id, "add", steamid64=steamid64)
+
+    def remove_from_steam_wishlist(self, app_id, steamid64=None):
+        return self.mutate_steam_wishlist(app_id, "remove", steamid64=steamid64)
 
     def context_menu(self, data):
         if not isinstance(data, dict):
@@ -243,6 +200,10 @@ class SteamContextMenuPlugin(SteamPluginActionsMixin, Flox):
                     self.default_icon,
                     self.settings_icon,
                     self.community_icon,
+                    self.wishlist_icon,
+                    self.top_sellers_icon,
+                    self.deals_icon,
+                    tr=getattr(self, "tr", None),
                 )
             )
             return
@@ -253,6 +214,46 @@ class SteamContextMenuPlugin(SteamPluginActionsMixin, Flox):
         is_owned = bool(data.get("is_owned"))
         refund_state = self.derive_refund_state(data)
         is_unreleased = self.derive_is_unreleased(data)
+        result_source = str(data.get("result_source", "") or "")
+        store_type = str(data.get("store_type", "") or "")
+        steamid64 = str(data.get("steamid64", "") or "")
+        is_free = data.get("is_free")
+        is_wishlisted = bool(data.get("is_wishlisted")) or result_source == "wishlist"
+        wishlist_actions_enabled = bool(data.get("wishlist_actions_enabled", True))
+        feature_health_cache_file = getattr(
+            self,
+            "feature_health_cache_file",
+            self.plugin_dir / "cache_feature_health.json",
+        )
+        can_add_to_cart = (
+            is_store_cart_result_source(result_source)
+            and store_type in {"", "game"}
+            and not install_path
+            and not is_owned
+            and not is_unreleased
+            and is_free is not True
+            and feature_enabled(feature_health_cache_file, "steam_cart")
+            and feature_enabled(feature_health_cache_file, "steam_session_token")
+        )
+        can_add_to_wishlist = (
+            is_store_action_result_source(result_source)
+            and store_type in {"", "game"}
+            and not install_path
+            and not is_owned
+            and not is_wishlisted
+            and wishlist_actions_enabled
+            and feature_enabled(feature_health_cache_file, "steam_session_token")
+            and feature_enabled(feature_health_cache_file, "steam_wishlist")
+        )
+        can_remove_from_wishlist = (
+            bool(app_id)
+            and not install_path
+            and not is_owned
+            and is_wishlisted
+            and wishlist_actions_enabled
+            and feature_enabled(feature_health_cache_file, "steam_session_token")
+            and feature_enabled(feature_health_cache_file, "steam_wishlist")
+        )
 
         self._add_menu_entries(
             get_game_context_menu_entries(
@@ -263,6 +264,8 @@ class SteamContextMenuPlugin(SteamPluginActionsMixin, Flox):
                 refund_state,
                 self.default_icon,
                 self.steamdb_icon,
+                self.buy_icon,
+                self.csrin_icon,
                 self.guides_icon,
                 self.discussions_icon,
                 self.screenshot_icon,
@@ -271,6 +274,13 @@ class SteamContextMenuPlugin(SteamPluginActionsMixin, Flox):
                 self.location_icon,
                 self.download_icon,
                 self.trash_icon,
+                self.wishlist_add_icon,
+                self.wishlist_remove_icon,
                 is_unreleased=is_unreleased,
+                can_add_to_cart=can_add_to_cart,
+                can_add_to_wishlist=can_add_to_wishlist,
+                can_remove_from_wishlist=can_remove_from_wishlist,
+                steamid64=steamid64,
+                tr=getattr(self, "tr", None),
             )
         )

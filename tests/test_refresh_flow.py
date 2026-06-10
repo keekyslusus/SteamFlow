@@ -20,6 +20,7 @@ if "vdf" not in sys.modules:
 from steamflow.accounts import SteamPluginAccountsMixin
 from steamflow.actions import SteamPluginActionsMixin
 from steamflow.local import SteamPluginLocalMixin
+from steamflow.tasks import BackgroundTaskManager
 
 
 class ImmediateThread:
@@ -229,7 +230,11 @@ class ScheduledRefreshTests(unittest.TestCase):
             (force, allow_background)
         )
 
-        with patch("steamflow.local.threading.Thread", ImmediateThread), patch("steamflow.local.time.sleep") as mocked_sleep:
+        with patch("steamflow.local.time.sleep") as mocked_sleep:
+            plugin.background_task_manager = BackgroundTaskManager(
+                thread_factory=ImmediateThread,
+                sleeper=mocked_sleep,
+            )
             plugin.schedule_installed_games_refresh(delay_seconds=2, reset_user_paths=True)
 
         self.assertEqual(plugin.last_update, 0)

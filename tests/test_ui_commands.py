@@ -1,7 +1,6 @@
 import sys
 import unittest
 from pathlib import Path
-from types import ModuleType
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LIB_PATH = PROJECT_ROOT / "lib"
@@ -9,37 +8,32 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 if str(LIB_PATH) not in sys.path:
     sys.path.insert(0, str(LIB_PATH))
-if "flox" in sys.modules:
-    del sys.modules["flox"]
-if "flox.clipboard" in sys.modules:
-    del sys.modules["flox.clipboard"]
-flox_module = ModuleType("flox")
-clipboard_module = ModuleType("flox.clipboard")
-clipboard_module.get = lambda: ""
-flox_module.clipboard = clipboard_module
-sys.modules["flox"] = flox_module
-sys.modules["flox.clipboard"] = clipboard_module
-
 from steamflow.ui_commands import SteamPluginUICommandsMixin
+from steamflow.constants import STEAMFLOW_CONFIG
 
 
 class UICommandsHarness(SteamPluginUICommandsMixin):
     OWNED_ICON = "owned-icon"
     BROWSER_ICON = "browser-icon"
+    BUY_ICON = "buy-icon"
     CLIPBOARD_ICON = "clipboard-icon"
     COMMUNITY_ICON = "community-icon"
+    DEALS_ICON = "deals-icon"
     TRASH_ICON = "trash-icon"
+    TOP_SELLERS_ICON = "top-sellers-icon"
     WISHLIST_ICON = "wishlist-icon"
     ONLINE_ICON = "online-icon"
     OFFLINE_ICON = "offline-icon"
     INVISIBLE_ICON = "invisible-icon"
     WARNING_ICON = "warning-icon"
+    FEATURE_HEALTH_RESET_ICON = "feature-health-reset-icon"
 
     def __init__(self):
         self.messages = []
         self.logs = []
         self.saved_key_args = None
         self.removed_key = False
+        self.reset_feature_health_called = 0
         self.has_api_key = False
         self.user_keyword = "steam"
         self.ensure_startup_initialized_called = 0
@@ -48,6 +42,8 @@ class UICommandsHarness(SteamPluginUICommandsMixin):
         self.validation_result = ({"570"}, {"570": 11290})
         self.wishlist_error = None
         self.active_local_persona_state = 7
+        self.feature_health_statuses = {}
+        self.disabled_features = set()
 
     def ensure_startup_initialized(self):
         self.ensure_startup_initialized_called += 1
@@ -96,6 +92,16 @@ class UICommandsHarness(SteamPluginUICommandsMixin):
 
     def remove_owned_api_key(self):
         self.removed_key = True
+
+    def reset_feature_health(self, name=None):
+        self.reset_feature_health_called += 1
+        self.reset_feature_health_name = name
+
+    def get_feature_health_status(self, name):
+        return self.feature_health_statuses.get(str(name), {"state": "healthy", "last_reason": ""})
+
+    def feature_enabled(self, name):
+        return str(name) not in self.disabled_features
 
     def has_owned_api_key(self):
         return self.has_api_key
@@ -161,23 +167,39 @@ class UICommandsTests(unittest.TestCase):
     def test_build_help_results_uses_dynamic_keyword_and_wishlist_unavailable_notice(self):
         harness = UICommandsHarness()
         harness.user_keyword = "st"
-        harness.wishlist_error = "Steam API Not Configured"
+        harness.wishlist_error = STEAMFLOW_CONFIG.availability_reasons.api_not_configured
 
         results = harness.build_help_results()
 
         self.assertEqual(
             [result["Title"] for result in results],
-            ["st api", "st switch", "st status", "st wishlist"],
+            ["st api", "st switch", "st status", "st wishlist", "st top", "st deals"],
         )
         self.assertEqual(
             [result["IcoPath"] for result in results],
-            ["owned-icon", "community-icon", "online-icon", "wishlist-icon"],
+            [
+                "owned-icon",
+                "community-icon",
+                "online-icon",
+                "wishlist-icon",
+                "top-sellers-icon",
+                "deals-icon",
+            ],
         )
         self.assertEqual(
             results[0]["action"],
             {"method": "change_query", "parameters": ["st api", True], "dontHideAfterAction": True},
         )
         self.assertIn("Unavailable: Steam API not configured", results[3]["SubTitle"])
+
+    def test_store_collection_query_aliases_match_full_commands(self):
+        harness = UICommandsHarness()
+
+        self.assertEqual(harness.get_store_collection_query("top"), "top_sellers")
+        self.assertEqual(harness.get_store_collection_query("sellers"), "top_sellers")
+        self.assertEqual(harness.get_store_collection_query("deals"), "specials")
+        self.assertEqual(harness.get_store_collection_query("specials"), "specials")
+        self.assertIsNone(harness.get_store_collection_query("de"))
 
     def test_status_query_alias_matches_expected_command(self):
         harness = UICommandsHarness()
@@ -232,11 +254,21 @@ class UICommandsTests(unittest.TestCase):
                 "Open Steam Web API Key Page",
                 "Save API Key From Clipboard",
                 "Steam API Not Configured",
+                "Fragile Features: All OK",
             ],
         )
         self.assertEqual(
             [result["Score"] for result in results],
-            [20000, 19999, 19997],
+            [20000, 19999, 19997, 19996],
+        )
+        self.assertEqual(
+            results[-1]["action"],
+            {"method": "reset_feature_health_action", "parameters": []},
+        )
+        self.assertEqual(results[-1]["IcoPath"], "feature-health-reset-icon")
+        self.assertEqual(
+            results[-1]["SubTitle"],
+            "Download control, Steam cart, Steam wishlist, Token cache are enabled | Press to reset",
         )
 
     def test_save_owned_api_key_shows_success_message(self):
@@ -253,6 +285,22 @@ class UICommandsTests(unittest.TestCase):
 
         self.assertIn("saved and bound", result)
         self.assertEqual(harness.messages[-1][0], "Steam API Key Saved")
+
+    def test_open_steam_web_api_key_page_uses_steam_client(self):
+        harness = UICommandsHarness()
+        opened_uris = []
+
+        from steamflow import ui_commands as module
+
+        original_open_uri = module.open_uri
+        module.open_uri = opened_uris.append
+        try:
+            result = harness.open_steam_web_api_key_page()
+        finally:
+            module.open_uri = original_open_uri
+
+        self.assertEqual(result, "Steam Web API key page opened")
+        self.assertEqual(opened_uris, ["steam://openurl/https://steamcommunity.com/dev/apikey"])
 
     def test_save_owned_api_key_shows_error_for_invalid_clipboard(self):
         harness = UICommandsHarness()
@@ -277,6 +325,64 @@ class UICommandsTests(unittest.TestCase):
         self.assertEqual(result, "Stored Steam API key removed")
         self.assertTrue(harness.removed_key)
         self.assertEqual(harness.messages[-1][0], "Steam API Key Removed")
+
+    def test_build_owned_api_results_with_key_keeps_feature_health_reset_last(self):
+        harness = UICommandsHarness()
+        harness.has_api_key = True
+
+        results = harness.build_owned_api_results()
+
+        self.assertEqual(results[-1]["Title"], "Fragile Features: All OK")
+        self.assertLess(results[-1]["Score"], min(result["Score"] for result in results[:-1]))
+        self.assertEqual(
+            results[-1]["action"],
+            {"method": "reset_feature_health_action", "parameters": []},
+        )
+
+    def test_build_owned_api_results_summarizes_disabled_feature_health(self):
+        harness = UICommandsHarness()
+        harness.feature_health_statuses["steam_cart"] = {
+            "state": "disabled",
+            "last_reason": "cart_rejected",
+        }
+        harness.disabled_features.add("steam_cart")
+
+        results = harness.build_owned_api_results()
+
+        self.assertEqual(results[-1]["Title"], "Fragile Features: 1 Need Attention")
+        self.assertEqual(results[-1]["SubTitle"], "Steam cart disabled: cart_rejected | Press to reset")
+        self.assertEqual(
+            results[-1]["action"],
+            {"method": "reset_feature_health_action", "parameters": []},
+        )
+
+    def test_reset_feature_health_action_resets_all_feature_health(self):
+        harness = UICommandsHarness()
+
+        result = harness.reset_feature_health_action()
+
+        self.assertEqual(result, "Fragile Steam feature health reset")
+        self.assertEqual(harness.reset_feature_health_called, 1)
+        self.assertIsNone(harness.reset_feature_health_name)
+        self.assertEqual(
+            harness.messages[-1],
+            (
+                "Feature Health Reset",
+                "Fragile Steam feature health was reset",
+                "feature-health-reset-icon",
+            ),
+        )
+
+    def test_reset_feature_health_action_returns_unavailable_without_reset_method(self):
+        class MissingResetHarness(UICommandsHarness):
+            reset_feature_health = None
+
+        harness = MissingResetHarness()
+
+        result = harness.reset_feature_health_action()
+
+        self.assertEqual(result, "Feature health reset is unavailable")
+        self.assertEqual(harness.messages, [])
 
 
 if __name__ == "__main__":

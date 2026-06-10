@@ -19,6 +19,9 @@ class StoreMetricsHarness(SteamPluginStoreMetricsMixin):
     def get_country_code(self):
         return "us"
 
+    def get_active_steam_user_steamid64(self):
+        return "76561198000000000"
+
     def is_owned_app(self, app_id):
         return False
 
@@ -34,6 +37,9 @@ class StoreMetricsHarness(SteamPluginStoreMetricsMixin):
     def has_owned_api_key(self):
         return False
 
+    def is_owned_api_key_bound_to_active_user(self):
+        return False
+
     def get_owned_game_playtime_minutes(self, app_id):
         return None
 
@@ -47,17 +53,26 @@ class StoreMetricsHarness(SteamPluginStoreMetricsMixin):
         return {"method": method, "parameters": list(parameters)}
 
     def build_result(self, title, subtitle, icon_path=None, action=None, context_data=None, **extra_fields):
-        result = {"Title": title, "SubTitle": subtitle, "IcoPath": icon_path, "Action": action}
+        result = {
+            "Title": title,
+            "SubTitle": subtitle,
+            "IcoPath": icon_path,
+            "Action": action,
+            "ContextData": context_data,
+        }
         result.update(extra_fields)
         return result
 
-    def get_app_details_metadata(self, app_id, allow_network_on_miss=True):
+    def get_app_details_metadata(self, app_id, allow_network_on_miss=True, fetch_timeout=1.5):
+        self.appdetails_calls.append((str(app_id), allow_network_on_miss, fetch_timeout))
         return self.app_details_by_id.get(str(app_id))
 
     def get_review_score(self, app_id, allow_network_on_miss=True):
+        self.review_calls.append((str(app_id), allow_network_on_miss))
         return None
 
     def get_current_players(self, app_id, allow_network_on_miss=True):
+        self.player_calls.append((str(app_id), allow_network_on_miss))
         return None
 
     def get_owned_store_achievement_progress(self, app_id, allow_network_on_miss=True):
@@ -68,6 +83,13 @@ class StoreMetricsHarness(SteamPluginStoreMetricsMixin):
 
     def __init__(self):
         self.app_details_by_id = {}
+        self.appdetails_calls = []
+        self.review_calls = []
+        self.player_calls = []
+        self.scheduled_wishlist_refreshes = []
+
+    def schedule_wishlist_refresh(self, force=False):
+        self.scheduled_wishlist_refreshes.append(force)
 
 
 class StoreMetricsTests(unittest.TestCase):
@@ -241,6 +263,227 @@ class StoreMetricsTests(unittest.TestCase):
             result["Action"],
             {"method": "open_steam_library_game_details", "parameters": ["570"]},
         )
+
+    def test_process_game_data_can_fetch_appdetails_without_cold_metrics(self):
+        harness = StoreMetricsHarness()
+        harness.should_show_positive_reviews = lambda: True
+        harness.should_show_player_count = lambda: True
+        harness.app_details_by_id["570"] = {
+            "type": "game",
+            "is_free": True,
+            "name": "Dota 2",
+            "capsule_image": "https://example.com/capsule.jpg",
+            "platforms": {"windows": True},
+            "has_price": False,
+            "price": None,
+            "coming_soon": False,
+            "release_date_text": "",
+        }
+
+        result = harness.process_game_data(
+            {
+                "type": "app",
+                "id": "570",
+                "name": "Dota 2",
+                "platforms": {},
+                "tiny_image": None,
+                "has_price": False,
+                "price": None,
+                "is_free": True,
+            },
+            allow_cold_metric_fetch=False,
+            allow_cold_appdetails_fetch=True,
+            appdetails_timeout=2.0,
+        )
+
+        self.assertEqual(result["Title"], "\U0001F6D2 Dota 2")
+        self.assertEqual(harness.appdetails_calls[-1], ("570", True, 2.0))
+        self.assertEqual(harness.review_calls, [("570", False)])
+        self.assertEqual(harness.player_calls, [("570", False)])
+
+    def test_review_score_cache_key_includes_steam_language(self):
+        harness = StoreMetricsHarness()
+        harness.get_steam_language = lambda: "brazilian"
+
+        self.assertEqual(harness._review_score_cache_key("570"), "570:brazilian")
+
+    def test_process_game_data_can_require_appdetails(self):
+        harness = StoreMetricsHarness()
+
+        result = harness.process_game_data(
+            {
+                "type": "app",
+                "id": "999",
+                "name": "Missing",
+                "platforms": {},
+                "tiny_image": None,
+                "has_price": True,
+                "price": {"final": 398000, "currency": "KZT"},
+                "is_free": False,
+            },
+            allow_cold_metric_fetch=False,
+            allow_cold_appdetails_fetch=True,
+            require_appdetails=True,
+        )
+
+        self.assertIsNone(result)
+
+    def test_process_game_data_keeps_hardware_by_default(self):
+        harness = StoreMetricsHarness()
+        harness.app_details_by_id["1675200"] = {
+            "type": "hardware",
+            "is_free": False,
+            "name": "Steam Deck",
+            "capsule_image": "https://example.com/deck.jpg",
+            "platforms": {"windows": True, "mac": True, "linux": True},
+            "has_price": False,
+            "price": None,
+            "coming_soon": False,
+            "release_date_text": "17 Jan, 2025",
+        }
+
+        result = harness.process_game_data(
+            {
+                "type": "app",
+                "id": "1675200",
+                "name": "Steam Deck",
+                "platforms": {},
+                "tiny_image": None,
+                "has_price": False,
+                "price": None,
+                "is_free": False,
+            },
+            allow_cold_appdetails_fetch=True,
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["Title"], "\U0001F6D2 Steam Deck")
+
+    def test_process_game_data_hides_hardware_when_requested(self):
+        harness = StoreMetricsHarness()
+        harness.app_details_by_id["1675200"] = {
+            "type": "hardware",
+            "is_free": False,
+            "name": "Steam Deck",
+            "capsule_image": "https://example.com/deck.jpg",
+            "platforms": {"windows": True, "mac": True, "linux": True},
+            "has_price": False,
+            "price": None,
+            "coming_soon": False,
+            "release_date_text": "17 Jan, 2025",
+        }
+
+        result = harness.process_game_data(
+            {
+                "type": "app",
+                "id": "1675200",
+                "name": "Steam Deck",
+                "platforms": {},
+                "tiny_image": None,
+                "has_price": False,
+                "price": None,
+                "is_free": False,
+            },
+            allow_cold_appdetails_fetch=True,
+            hide_hardware=True,
+        )
+
+        self.assertIsNone(result)
+
+    def test_process_store_results_schedules_stale_wishlist_refresh_without_waiting(self):
+        harness = StoreMetricsHarness()
+        harness.app_details_by_id["570"] = {
+            "type": "game",
+            "is_free": True,
+            "name": "Dota 2",
+            "capsule_image": "https://example.com/capsule.jpg",
+            "platforms": {"windows": True},
+            "has_price": False,
+            "price": None,
+            "coming_soon": False,
+            "release_date_text": "",
+        }
+
+        results = harness.process_store_results(
+            [
+                {
+                    "type": "app",
+                    "id": "570",
+                    "name": "Dota 2",
+                    "platforms": {},
+                    "tiny_image": None,
+                    "has_price": False,
+                    "price": None,
+                    "is_free": True,
+                }
+            ],
+            allow_cold_metric_fetch=False,
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(harness.scheduled_wishlist_refreshes, [False])
+
+    def test_process_game_data_marks_wishlist_actions_unavailable_without_api_key(self):
+        harness = StoreMetricsHarness()
+        harness.app_details_by_id["1462040"] = {
+            "type": "game",
+            "is_free": False,
+            "name": "FINAL FANTASY VII REMAKE INTERGRADE",
+            "capsule_image": "https://example.com/capsule.jpg",
+            "platforms": {"windows": True},
+            "has_price": True,
+            "price": {"final": 398000, "currency": "KZT"},
+            "coming_soon": False,
+            "release_date_text": "",
+        }
+
+        result = harness.process_game_data(
+            {
+                "type": "app",
+                "id": "1462040",
+                "name": "FINAL FANTASY VII REMAKE INTERGRADE",
+                "platforms": {},
+                "tiny_image": None,
+                "has_price": True,
+                "price": {"final": 398000, "currency": "KZT"},
+                "is_free": False,
+            },
+            allow_cold_metric_fetch=False,
+        )
+
+        self.assertFalse(result["ContextData"]["wishlist_actions_enabled"])
+
+    def test_process_game_data_marks_wishlist_actions_available_for_bound_api_key(self):
+        harness = StoreMetricsHarness()
+        harness.has_owned_api_key = lambda: True
+        harness.is_owned_api_key_bound_to_active_user = lambda: True
+        harness.app_details_by_id["1462040"] = {
+            "type": "game",
+            "is_free": False,
+            "name": "FINAL FANTASY VII REMAKE INTERGRADE",
+            "capsule_image": "https://example.com/capsule.jpg",
+            "platforms": {"windows": True},
+            "has_price": True,
+            "price": {"final": 398000, "currency": "KZT"},
+            "coming_soon": False,
+            "release_date_text": "",
+        }
+
+        result = harness.process_game_data(
+            {
+                "type": "app",
+                "id": "1462040",
+                "name": "FINAL FANTASY VII REMAKE INTERGRADE",
+                "platforms": {},
+                "tiny_image": None,
+                "has_price": True,
+                "price": {"final": 398000, "currency": "KZT"},
+                "is_free": False,
+            },
+            allow_cold_metric_fetch=False,
+        )
+
+        self.assertTrue(result["ContextData"]["wishlist_actions_enabled"])
 
 
 if __name__ == "__main__":

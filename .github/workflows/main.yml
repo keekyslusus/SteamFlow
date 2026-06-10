@@ -43,7 +43,7 @@ jobs:
           Remove-Item .\lib -Recurse -Force
         }
         # Install Windows runtime dependencies into the ./lib directory
-        pip install flox-lib vdf urllib3 certifi pillow==12.1.0 -t .\lib
+        pip install pyflowlauncher vdf urllib3 certifi pillow==12.1.0 -t .\lib
 
     - name: Create release zip
       shell: pwsh
