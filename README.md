@@ -71,7 +71,7 @@
 - Requires a Steam Web API key (`steam api` to configure)
 
 
-### Adaptive context menu
+### Smart context menu
 <img src=".github/contextmenu.png" width="500">
 
 - Open store page in Steam/[SteamDB](https://steamdb.info/)/[CS.RIN](https://cs.rin.ru/forum/viewforum.php?f=10)
