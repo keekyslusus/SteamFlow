@@ -1,23 +1,24 @@
 body:
-  - type: dropdown
-    attributes:
-      name: language
-      label: "Language"
-      description: "Plugin display language"
-      defaultValue: "Auto (system language)"
-      options:
-        - "Auto (system language)"
-        - "English"
-        - "German"
-        - "Spanish - Spain"
-        - "French"
-        - "Japanese"
-        - "Korean"
-        - "Polish"
-        - "Portuguese - Brazil"
-        - "Russian"
-        - "Simplified Chinese"
-        - "Traditional Chinese"
+  # Localization is temporarily disabled while only the English locale is shipped.
+  # - type: dropdown
+  #   attributes:
+  #     name: language
+  #     label: "Language"
+  #     description: "Plugin display language"
+  #     defaultValue: "Auto (system language)"
+  #     options:
+  #       - "Auto (system language)"
+  #       - "English"
+  #       - "German"
+  #       - "Spanish - Spain"
+  #       - "French"
+  #       - "Japanese"
+  #       - "Korean"
+  #       - "Polish"
+  #       - "Portuguese - Brazil"
+  #       - "Russian"
+  #       - "Simplified Chinese"
+  #       - "Traditional Chinese"
   - type: input
     attributes:
       name: blacklisted_app_ids
@@ -90,6 +91,12 @@ body:
       label: "Show CS.RIN in context menu"
       description: "Show CS.RIN search links in installed game context menus"
       defaultValue: true
+  - type: checkbox
+    attributes:
+      name: enable_smokeapi_context_menu
+      label: "[experimental] SmokeAPI context menu"
+      description: "Show the SmokeAPI installer. Required DLLs are downloaded only after confirmation; installation can break games or trigger anti-cheat."
+      defaultValue: false
   - type: checkbox
     attributes:
       name: enable_perf_logging

@@ -8,6 +8,7 @@ from .providers import get_plugin_providers
 from .store_metrics_service import (
     RELEASE_DATE_PLACEHOLDER_VALUES,
     build_store_game_result_spec,
+    deduplicate_store_games,
     fetch_achievement_schema_total_with_http_get,
     fetch_current_players_with_http_get,
     fetch_player_achievement_progress_with_http_get,
@@ -19,7 +20,7 @@ from .store_metrics_service import (
     format_review_score,
     format_store_achievement_progress,
     format_store_price_or_availability,
-    normalize_store_game_data,
+    prepare_store_game_data,
     resolve_store_metric_bundle,
     should_show_release_date_text,
     supports_live_metrics,
@@ -35,6 +36,7 @@ class SteamPluginStoreMetricsMixin:
         "results",
         "runtime",
         "settings",
+        "steam_deck",
         "store",
     )
 
@@ -322,20 +324,16 @@ class SteamPluginStoreMetricsMixin:
         if callable(schedule_refresh):
             schedule_refresh(force=False)
 
-    def process_game_data(
+    def _prepare_store_game_data(
         self,
         game_data,
-        allow_cold_metric_fetch=True,
-        allow_cold_appdetails_fetch=None,
+        allow_cold_appdetails_fetch,
         appdetails_timeout=1.5,
         require_appdetails=False,
         hide_hardware=False,
     ):
         app_id = game_data.get("id")
         providers = self.store_metric_providers
-        is_owned = providers.profile.is_owned_app(app_id)
-        if allow_cold_appdetails_fetch is None:
-            allow_cold_appdetails_fetch = allow_cold_metric_fetch
         metadata = (
             providers.store.app_details_metadata(
                 app_id,
@@ -345,12 +343,31 @@ class SteamPluginStoreMetricsMixin:
             if app_id
             else None
         )
-        if require_appdetails and not metadata:
-            return None
-        game_data = normalize_store_game_data(game_data, metadata)
-        if hide_hardware and str(game_data.get("store_type", "") or "").strip().lower() == "hardware":
-            return None
+        return prepare_store_game_data(
+            game_data,
+            metadata,
+            require_appdetails=require_appdetails,
+            hide_hardware=hide_hardware,
+        )
 
+    def _store_game_uses_enabled_metrics(self, game_data):
+        providers = self.store_metric_providers
+        supports_metrics = self._supports_live_metrics(game_data)
+        if supports_metrics and (
+            providers.settings.should_show_positive_reviews()
+            or providers.settings.should_show_player_count()
+        ):
+            return True
+        return (
+            providers.profile.is_owned_app(game_data.get("id"))
+            and providers.settings.should_show_achievements()
+            and providers.account.has_owned_api_key()
+        )
+
+    def _build_store_game_result(self, game_data, allow_cold_metric_fetch):
+        app_id = game_data.get("id")
+        providers = self.store_metric_providers
+        is_owned = providers.profile.is_owned_app(app_id)
         image_url = game_data.get("tiny_image")
         should_fetch_review = providers.settings.should_show_positive_reviews() and self.should_fetch_review_score(game_data)
         should_fetch_players = providers.settings.should_show_player_count() and self.should_fetch_player_count(game_data)
@@ -378,6 +395,9 @@ class SteamPluginStoreMetricsMixin:
             include_review_score=should_fetch_review,
             include_player_count=should_fetch_players,
             include_achievements=should_fetch_achievements,
+            deck_compatibility_text=providers.steam_deck.compatibility_label(
+                game_data.get("steam_deck_compat_category")
+            ),
             labels={
                 "free": providers.settings.tr("store.availability.free"),
                 "coming_soon": providers.settings.tr("store.availability.coming_soon"),
@@ -406,6 +426,28 @@ class SteamPluginStoreMetricsMixin:
             AppID=str(app_id) if app_id is not None else None,
         )
 
+    def process_game_data(
+        self,
+        game_data,
+        allow_cold_metric_fetch=True,
+        allow_cold_appdetails_fetch=None,
+        appdetails_timeout=1.5,
+        require_appdetails=False,
+        hide_hardware=False,
+    ):
+        if allow_cold_appdetails_fetch is None:
+            allow_cold_appdetails_fetch = allow_cold_metric_fetch
+        prepared_game_data = self._prepare_store_game_data(
+            game_data,
+            allow_cold_appdetails_fetch,
+            appdetails_timeout=appdetails_timeout,
+            require_appdetails=require_appdetails,
+            hide_hardware=hide_hardware,
+        )
+        if not prepared_game_data:
+            return None
+        return self._build_store_game_result(prepared_game_data, allow_cold_metric_fetch)
+
     def process_store_results(
         self,
         api_results,
@@ -426,6 +468,7 @@ class SteamPluginStoreMetricsMixin:
             for game_data in api_results
             if str(game_data.get("id")) not in skipped_app_ids
         ]
+        filtered_results = deduplicate_store_games(filtered_results)
         if not filtered_results:
             return []
 
@@ -441,14 +484,15 @@ class SteamPluginStoreMetricsMixin:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_index = {
                 executor.submit(
-                    self.process_game_data,
+                    self._prepare_store_game_data,
                     game_data,
-                    bool(allow_cold_metric_fetch)
-                    and index < int(cold_metric_fetch_limit or 0),
-                    allow_cold_appdetails_fetch=(
+                    (
                         allow_cold_appdetails_fetch
                         if allow_cold_appdetails_fetch is not None
-                        else None
+                        else (
+                            bool(allow_cold_metric_fetch)
+                            and index < int(cold_metric_fetch_limit or 0)
+                        )
                     ),
                     appdetails_timeout=appdetails_timeout,
                     require_appdetails=require_appdetails,
@@ -456,7 +500,44 @@ class SteamPluginStoreMetricsMixin:
                 ): index
                 for index, game_data in enumerate(filtered_results)
             }
-            processed_results = [None] * len(filtered_results)
+            prepared_results = [None] * len(filtered_results)
+
+            for future in as_completed(future_to_index):
+                try:
+                    prepared_results[future_to_index[future]] = future.result()
+                except Exception:
+                    self.log_exception("Failed to prepare Steam store result")
+
+        prepared_results = [game_data for game_data in prepared_results if game_data]
+        if not prepared_results:
+            return []
+
+        remaining_cold_metric_fetches = int(cold_metric_fetch_limit or 0)
+        cold_metric_allowances = []
+        for game_data in prepared_results:
+            allow_cold_fetch = bool(
+                allow_cold_metric_fetch
+                and remaining_cold_metric_fetches > 0
+                and self._store_game_uses_enabled_metrics(game_data)
+            )
+            cold_metric_allowances.append(allow_cold_fetch)
+            if allow_cold_fetch:
+                remaining_cold_metric_fetches -= 1
+
+        max_workers = min(
+            len(prepared_results),
+            max(self.CONFIG.query.max_results, self.CONFIG.query.max_store_collection_results),
+        )
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_index = {
+                executor.submit(
+                    self._build_store_game_result,
+                    game_data,
+                    cold_metric_allowances[index],
+                ): index
+                for index, game_data in enumerate(prepared_results)
+            }
+            processed_results = [None] * len(prepared_results)
 
             for future in as_completed(future_to_index):
                 try:

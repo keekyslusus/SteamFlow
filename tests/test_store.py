@@ -32,6 +32,8 @@ class StoreHarness(SteamPluginStoreMixin):
         self.country_code = country_code
         self.owned_app_ids = set()
         self.fetch_calls = []
+        self.deck_compatibility_calls = []
+        self.deck_compatibility_categories = {}
         self.logged_exceptions = []
         self.logged_slow_calls = []
 
@@ -49,6 +51,10 @@ class StoreHarness(SteamPluginStoreMixin):
 
     def get_active_steam_user_steamid64(self):
         return None
+
+    def get_steam_deck_compatibility_categories(self, app_ids):
+        self.deck_compatibility_calls.append(list(app_ids))
+        return dict(self.deck_compatibility_categories)
 
     def cleanup_caches_if_needed(self):
         return None
@@ -113,6 +119,21 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(result, {"games": games, "error": None})
             self.assertEqual(plugin.search_cache[("dota", "us")]["games"], games)
             self.assertEqual(plugin.logged_exceptions, [])
+
+    def test_search_steam_api_enriches_results_with_batched_deck_compatibility(self):
+        with TemporaryDirectory() as temp_dir:
+            plugin = StoreHarness(temp_dir, country_code="us")
+            plugin.deck_compatibility_categories = {"570": 2}
+            games = [{"id": 570, "name": "Dota 2"}]
+
+            with patch("steamflow.store.fetch_store_search_games", return_value=games):
+                result = plugin.search_steam_api("dota")
+
+            self.assertEqual(plugin.deck_compatibility_calls, [[570]])
+            self.assertEqual(
+                result["games"][0]["steam_deck_compat_category"],
+                2,
+            )
 
     def test_store_collection_uses_fresh_cache_without_network(self):
         with TemporaryDirectory() as temp_dir:

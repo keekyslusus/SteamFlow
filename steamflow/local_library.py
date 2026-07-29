@@ -327,6 +327,10 @@ class SteamPluginLocalLibraryMixin:
                     self.last_played_timestamps = last_played_timestamps
                     self.last_update = time.time()
                 self.installed_games_update_in_progress = False
+        if update_completed:
+            warm_smoke_safety_cache = getattr(self, "warm_smoke_safety_cache", None)
+            if callable(warm_smoke_safety_cache):
+                warm_smoke_safety_cache(installed_game_paths)
 
     def update_installed_games(self, force=False, allow_background=True):
         if not force and self.has_installed_games_snapshot() and self.active_local_user_state_is_stale():

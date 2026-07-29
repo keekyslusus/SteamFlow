@@ -194,6 +194,10 @@ class SettingsProvider:
     def should_show_csrin_context_menu(self):
         return self.plugin.should_show_csrin_context_menu()
 
+    def should_show_smokeapi_context_menu(self):
+        method = getattr(self.plugin, "should_show_smokeapi_context_menu", None)
+        return bool(method()) if callable(method) else False
+
     def should_show_last_played(self):
         return self.plugin.should_show_last_played()
 
@@ -314,6 +318,27 @@ class DownloadProvider:
 
 
 @dataclass(frozen=True)
+class SteamDeckProvider:
+    plugin: object
+
+    def is_active(self):
+        method = getattr(self.plugin, "is_steam_deck_active", None)
+        return bool(method()) if callable(method) else False
+
+    def schedule_history_refresh(self, force=False):
+        method = getattr(self.plugin, "schedule_steam_deck_history_refresh", None)
+        return bool(method(force=force)) if callable(method) else False
+
+    def compatibility_categories(self, app_ids):
+        method = getattr(self.plugin, "get_steam_deck_compatibility_categories", None)
+        return method(app_ids) if callable(method) else {}
+
+    def compatibility_label(self, category):
+        method = getattr(self.plugin, "get_steam_deck_compatibility_label", None)
+        return str(method(category) or "") if callable(method) else ""
+
+
+@dataclass(frozen=True)
 class RuntimeProvider:
     plugin: object
 
@@ -401,6 +426,15 @@ class QueryCommandProvider:
     def build_wishlist_results(self, search_term=""):
         return self.plugin.build_wishlist_results(search_term)
 
+    def is_friends_query(self, search_term):
+        return self.plugin.is_friends_query(search_term)
+
+    def get_friends_query_text(self, search_term):
+        return self.plugin.get_friends_query_text(search_term)
+
+    def build_friends_results(self, search_term=""):
+        return self.plugin.build_friends_results(search_term)
+
     def is_switch_account_query(self, search_term):
         return self.plugin.is_switch_account_query(search_term)
 
@@ -441,6 +475,26 @@ class WishlistProvider:
 
 
 @dataclass(frozen=True)
+class FriendsProvider:
+    plugin: object
+
+    def load_cache(self):
+        return self.plugin.load_friends_cache()
+
+    def save_cache(self):
+        return self.plugin.save_friends_cache()
+
+    def clear_cache(self):
+        return self.plugin.clear_friends_cache()
+
+    def items(self):
+        return self.plugin.get_friends()
+
+    def fresh_playing_by_app(self):
+        return self.plugin.get_fresh_friends_playing_by_app()
+
+
+@dataclass(frozen=True)
 class SteamPluginProviders:
     plugin: object
 
@@ -477,6 +531,10 @@ class SteamPluginProviders:
         return DownloadProvider(self.plugin)
 
     @cached_property
+    def steam_deck(self):
+        return SteamDeckProvider(self.plugin)
+
+    @cached_property
     def runtime(self):
         return RuntimeProvider(self.plugin)
 
@@ -491,6 +549,10 @@ class SteamPluginProviders:
     @cached_property
     def wishlist(self):
         return WishlistProvider(self.plugin)
+
+    @cached_property
+    def friends(self):
+        return FriendsProvider(self.plugin)
 
 
 def get_plugin_providers(plugin):

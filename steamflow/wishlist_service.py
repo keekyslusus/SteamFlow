@@ -1,12 +1,16 @@
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 
+from .cache_utils import read_json_file, write_json_file
 from .http_client import http_get_json
 from .os_integration import build_hidden_process_kwargs, start_hidden_process
 
 WISHLIST_WORKER_STALE_SECONDS = 15 * 60
+WISHLIST_CACHE_LOCK_TIMEOUT_SECONDS = 5
+WISHLIST_CACHE_LOCK_STALE_SECONDS = 30
 
 
 def _coerce_float(value, default=0.0):
@@ -107,6 +111,103 @@ def build_wishlist_cache_payload(last_attempt, last_sync, steamid64, items):
         "steamid64": steamid64,
         "items": list(items),
     }
+
+
+def acquire_wishlist_cache_lock(
+    cache_file,
+    timeout_seconds=WISHLIST_CACHE_LOCK_TIMEOUT_SECONDS,
+    stale_seconds=WISHLIST_CACHE_LOCK_STALE_SECONDS,
+    sleeper=time.sleep,
+    monotonic=time.monotonic,
+):
+    lock_file = Path(f"{cache_file}.mutation.lock")
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    deadline = monotonic() + float(timeout_seconds)
+    while True:
+        try:
+            descriptor = os.open(lock_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            try:
+                os.write(descriptor, str(os.getpid()).encode("ascii"))
+            except Exception:
+                os.close(descriptor)
+                try:
+                    lock_file.unlink()
+                except FileNotFoundError:
+                    pass
+                raise
+            return lock_file, descriptor
+        except FileExistsError:
+            try:
+                if time.time() - lock_file.stat().st_mtime >= float(stale_seconds):
+                    lock_file.unlink()
+                    continue
+            except FileNotFoundError:
+                continue
+            if monotonic() >= deadline:
+                raise TimeoutError(f"Timed out waiting for wishlist cache lock: {lock_file}")
+            sleeper(0.05)
+
+
+def release_wishlist_cache_lock(lock_file, descriptor):
+    try:
+        os.close(descriptor)
+    finally:
+        try:
+            Path(lock_file).unlink()
+        except FileNotFoundError:
+            pass
+
+
+def mutate_wishlist_cache_file(
+    cache_file,
+    steamid64,
+    app_id,
+    action,
+    fallback_items=None,
+    now=None,
+):
+    cache_file = Path(cache_file)
+    steamid64 = str(steamid64 or "").strip()
+    action = str(action or "").strip().lower()
+    if not steamid64:
+        raise ValueError("Missing Steam ID for wishlist cache mutation")
+    if action not in {"add", "remove"}:
+        raise ValueError(f"Unsupported wishlist cache mutation: {action}")
+
+    lock_file, descriptor = acquire_wishlist_cache_lock(cache_file)
+    try:
+        normalized_cache = normalize_wishlist_cache_payload(
+            read_json_file(cache_file, default=None)
+        )
+        if (
+            not normalized_cache
+            or str(normalized_cache.get("steamid64") or "") != steamid64
+        ):
+            normalized_cache = {
+                "last_attempt": 0,
+                "last_sync": 0,
+                "steamid64": steamid64,
+                "items": normalize_wishlist_items(fallback_items or []),
+            }
+
+        mutation_time = time.time() if now is None else float(now)
+        items = normalized_cache["items"]
+        if action == "add":
+            items = add_wishlist_cache_item(items, app_id, now=mutation_time)
+        else:
+            items = remove_wishlist_cache_item(items, app_id)
+
+        payload = build_wishlist_cache_payload(
+            mutation_time,
+            mutation_time,
+            steamid64,
+            items,
+        )
+        if not write_json_file(cache_file, payload):
+            raise OSError(f"Failed to save wishlist cache: {cache_file}")
+        return normalize_wishlist_cache_payload(payload)
+    finally:
+        release_wishlist_cache_lock(lock_file, descriptor)
 
 
 def is_wishlist_cache_fresh(steamid64, cached_steamid64, last_sync, ttl_seconds, is_fresh):

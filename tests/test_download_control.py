@@ -18,6 +18,7 @@ if str(LIB_PATH) not in sys.path:
 from steamflow.download_control import (
     SteamPluginDownloadControlMixin,
 )
+from steamflow.core import SteamPluginCoreMixin
 from steamflow.os_integration import STEAM_GAMES_URI
 from steamflow.session_token import (
     STEAM_ACCOUNT_PREFERENCES_URI,
@@ -77,6 +78,8 @@ class LocalDownloadUIHarness(SteamPluginDownloadControlMixin, SteamPluginUIMixin
     def __init__(self):
         self.status_by_app_id = {}
         self.live_status_by_app_id = {}
+        self.playtime_by_app_id = {}
+        self.show_playtime = False
         self.enabled_features = {}
 
     def build_action(self, method, *parameters):
@@ -94,7 +97,7 @@ class LocalDownloadUIHarness(SteamPluginDownloadControlMixin, SteamPluginUIMixin
         return result
 
     def build_context_data(self, **kwargs):
-        return dict(kwargs)
+        return SteamPluginCoreMixin.build_context_data(self, **kwargs)
 
     def get_installed_game_status(self, app_id):
         return self.status_by_app_id.get(str(app_id), "")
@@ -103,7 +106,7 @@ class LocalDownloadUIHarness(SteamPluginDownloadControlMixin, SteamPluginUIMixin
         return self.live_status_by_app_id.get(str(app_id), fallback_status)
 
     def get_playtime_minutes(self, app_id):
-        return None
+        return self.playtime_by_app_id.get(str(app_id))
 
     def get_last_played_timestamp(self, app_id):
         return None
@@ -112,7 +115,7 @@ class LocalDownloadUIHarness(SteamPluginDownloadControlMixin, SteamPluginUIMixin
         return None
 
     def should_show_playtime(self):
-        return False
+        return self.show_playtime
 
     def should_show_achievements(self):
         return False
@@ -125,6 +128,9 @@ class LocalDownloadUIHarness(SteamPluginDownloadControlMixin, SteamPluginUIMixin
 
     def should_prefetch_refund_state(self, app_id):
         return False
+
+    def is_owned_app(self, app_id):
+        return True
 
     def get_refund_state_for_local_game(self, app_id, allow_network_on_miss=False):
         return ""
@@ -359,7 +365,7 @@ class LocalDownloadUITests(unittest.TestCase):
 
         result = harness.build_local_result("1451940", "NEEDY GIRL OVERDOSE")
 
-        self.assertEqual(result["Title"], "\U0001F3AE NEEDY GIRL OVERDOSE [Updating]")
+        self.assertEqual(result["Title"], "NEEDY GIRL OVERDOSE [Updating]")
         self.assertEqual(result["SubTitle"], "Pause updating game")
         self.assertEqual(
             result["action"],
@@ -385,7 +391,7 @@ class LocalDownloadUITests(unittest.TestCase):
 
         result = harness.build_local_result("646570", "Slay the Spire")
 
-        self.assertEqual(result["Title"], "\U0001F3AE Slay the Spire [Update Paused]")
+        self.assertEqual(result["Title"], "Slay the Spire [Update Paused]")
         self.assertEqual(result["SubTitle"], "Resume updating game")
         self.assertEqual(
             result["action"],
@@ -399,7 +405,7 @@ class LocalDownloadUITests(unittest.TestCase):
 
         result = harness.build_local_result("1451940", "NEEDY GIRL OVERDOSE")
 
-        self.assertEqual(result["Title"], "\U0001F3AE NEEDY GIRL OVERDOSE [Updating]")
+        self.assertEqual(result["Title"], "NEEDY GIRL OVERDOSE [Updating]")
         self.assertEqual(result["SubTitle"], "Installed game, updating")
         self.assertEqual(
             result["action"],
@@ -417,11 +423,39 @@ class LocalDownloadUITests(unittest.TestCase):
 
         result = harness.build_local_result("1451940", "NEEDY GIRL OVERDOSE")
 
-        self.assertEqual(result["Title"], "\U0001F3AE NEEDY GIRL OVERDOSE [Updating Localized]")
+        self.assertEqual(result["Title"], "NEEDY GIRL OVERDOSE [Updating Localized]")
         self.assertEqual(
             result["action"],
             {"method": "control_steam_download", "parameters": ["1451940", "pause"]},
         )
+
+    def test_build_local_result_places_friend_activity_before_playtime(self):
+        harness = LocalDownloadUIHarness()
+        harness.playtime_by_app_id["570"] = 120
+        harness.show_playtime = True
+
+        result = harness.build_local_result(
+            "570",
+            "Dota 2",
+            friends_playing=["Alice"],
+        )
+
+        self.assertEqual(
+            result["SubTitle"],
+            "Launch game | Alice is playing | 2.0h",
+        )
+        self.assertEqual(result["ContextData"]["friends_playing_count"], 1)
+
+    def test_build_local_result_marks_checked_game_without_playing_friends(self):
+        harness = LocalDownloadUIHarness()
+
+        result = harness.build_local_result(
+            "570",
+            "Dota 2",
+            friends_playing=[],
+        )
+
+        self.assertEqual(result["ContextData"]["friends_playing_count"], 0)
 
 
 if __name__ == "__main__":

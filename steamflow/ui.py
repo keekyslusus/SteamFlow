@@ -1,12 +1,15 @@
 from . import util_steam_date
 from .constants import STEAMFLOW_CONFIG
 from .download_control import build_download_control_subtitle
+from .friends_ui_service import build_friends_playing_suffix
 from .localization import plugin_tr
 from .menu import (
+    get_friend_context_menu_entries,
     get_game_context_menu_entries,
     get_steam_client_context_menu_entries,
     is_store_action_result_source,
     is_store_cart_result_source,
+    store_type_supports_community_links,
 )
 from .os_integration import build_steam_run_game_uri, open_uri, run_shell_start_uri
 from .providers import get_plugin_providers
@@ -27,6 +30,7 @@ class SteamPluginUIMixin:
     REQUIRED_PLUGIN_PROVIDERS = (
         "account",
         "download",
+        "friends",
         "local",
         "metrics",
         "profile",
@@ -36,12 +40,15 @@ class SteamPluginUIMixin:
     )
     REQUIRED_PLUGIN_ATTRS = (
         "BUY_ICON",
+        "CHAT_ICON",
         "COMMUNITY_ICON",
         "CSRIN_ICON",
         "DEALS_ICON",
         "DEFAULT_ICON",
+        "FRIENDS_ICON",
         "SETTINGS_ICON",
         "TOP_SELLERS_ICON",
+        "TRADE_ICON",
         "WISHLIST_ICON",
         "WISHLIST_ADD_ICON",
         "WISHLIST_REMOVE_ICON",
@@ -174,6 +181,7 @@ class SteamPluginUIMixin:
         player_count=None,
         player_count_loaded=False,
         refund_state=None,
+        friends_playing=None,
     ):
         local_provider = self.ui_providers.local
         settings_provider = self.ui_providers.settings
@@ -185,6 +193,10 @@ class SteamPluginUIMixin:
         display_status_label = self.format_local_game_status_label(status_label)
         display_name = f"{name} [{display_status_label}]" if display_status_label else name
         subtitle = self.get_local_game_subtitle(app_id, status_label)
+        subtitle += build_friends_playing_suffix(
+            friends_playing,
+            tr=getattr(self, "tr", None),
+        )
         if settings_provider.should_show_playtime():
             subtitle += self.format_playtime(local_provider.playtime_minutes(app_id))
         subtitle += self.format_achievement_progress(app_id)
@@ -202,15 +214,22 @@ class SteamPluginUIMixin:
             refund_state = store_provider.refund_state_for_local_game(app_id, allow_network_on_miss=False)
         playtime_minutes = local_provider.playtime_minutes(app_id)
         has_current_account_local_data = local_provider.has_current_account_data(app_id)
+        is_owned = self.ui_providers.profile.is_owned_app(app_id)
 
         return result_provider.build_result(
-            title=f"\U0001F3AE {display_name}",
+            title=display_name,
             subtitle=subtitle,
             icon_path=local_provider.game_icon(app_id),
             context_data=result_provider.build_context_data(
                 app_id=app_id,
                 name=name,
                 install_path=local_provider.install_path(app_id),
+                is_owned=is_owned,
+                friends_playing_count=(
+                    len(friends_playing)
+                    if friends_playing is not None
+                    else None
+                ),
                 refund_state=refund_state,
                 playtime_minutes=playtime_minutes,
                 has_current_account_local_data=has_current_account_local_data,
@@ -267,6 +286,11 @@ class SteamPluginUIMixin:
         settings_provider = self.ui_providers.settings
         show_steamdb_context_menu = settings_provider.should_show_steamdb_context_menu()
         show_csrin_context_menu = settings_provider.should_show_csrin_context_menu()
+        show_smokeapi_context_menu = settings_provider.should_show_smokeapi_context_menu()
+        smokeapi_menu_state = {"action": "", "safety": "", "signals": ()}
+        get_smokeapi_menu_state = getattr(self, "get_smokeapi_menu_state", None)
+        if show_smokeapi_context_menu and callable(get_smokeapi_menu_state):
+            smokeapi_menu_state = get_smokeapi_menu_state(app_id, install_path)
         cache_key = (
             str(app_id or ""),
             name,
@@ -285,6 +309,10 @@ class SteamPluginUIMixin:
             steam_wishlist_enabled,
             show_steamdb_context_menu,
             show_csrin_context_menu,
+            show_smokeapi_context_menu,
+            smokeapi_menu_state["action"],
+            smokeapi_menu_state["safety"],
+            tuple(smokeapi_menu_state["signals"]),
         )
         with self.state_lock:
             cached_items = self.context_menu_cache.get(cache_key)
@@ -352,9 +380,14 @@ class SteamPluginUIMixin:
                 can_add_to_cart=can_add_to_cart,
                 can_add_to_wishlist=can_add_to_wishlist,
                 can_remove_from_wishlist=can_remove_from_wishlist,
+                show_community_links=store_type_supports_community_links(store_type),
                 show_steamdb=show_steamdb_context_menu,
                 show_csrin=show_csrin_context_menu,
                 steamid64=steamid64,
+                smokeapi_action=smokeapi_menu_state["action"],
+                smokeapi_safety=smokeapi_menu_state["safety"],
+                smokeapi_signals=smokeapi_menu_state["signals"],
+                smokeapi_icon=getattr(self, "SMOKEAPI_ICON", self.PROPERTIES_ICON),
                 tr=getattr(self, "tr", None),
             )
         ]
@@ -371,6 +404,30 @@ class SteamPluginUIMixin:
             items = self.get_steam_client_context_menu_items()
             for item in items:
                 self.ui_providers.results.add_result(item)
+            return
+
+        if data.get("menu") == "friend":
+            entries = get_friend_context_menu_entries(
+                str(data.get("steamid64", "") or ""),
+                data.get("name") or plugin_tr(self, "friends.unknown"),
+                str(data.get("gameid", "") or ""),
+                self.CHAT_ICON,
+                self.COMMUNITY_ICON,
+                self.DEFAULT_ICON,
+                trade_icon=self.TRADE_ICON,
+                game_name=data.get("game_name", ""),
+                tr=getattr(self, "tr", None),
+            )
+            for entry in entries:
+                self.ui_providers.results.add_result(
+                    self.build_context_menu_item(
+                        entry["title"],
+                        entry["subtitle"],
+                        entry["method"],
+                        *entry.get("parameters", []),
+                        icon_path=entry["icon"],
+                    )
+                )
             return
 
         app_id = str(data.get("app_id", ""))

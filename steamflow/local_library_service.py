@@ -80,6 +80,7 @@ def normalize_appmanifest_state(acf_data, config=STEAMFLOW_CONFIG):
         "app_id": str(acf_data.get("appid", "")).strip(),
         "name": acf_data.get("name"),
         "install_dir": acf_data.get("installdir"),
+        "last_owner": str(acf_data.get("LastOwner", "") or "").strip(),
         "state_flags": parse_state_flags(acf_data.get("StateFlags", 0), config=config),
         "bytes_to_download": parse_manifest_int(acf_data.get("BytesToDownload", 0)),
         "bytes_downloaded": parse_manifest_int(acf_data.get("BytesDownloaded", 0)),

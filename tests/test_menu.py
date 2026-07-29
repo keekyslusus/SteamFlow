@@ -10,7 +10,11 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(LIB_PATH) not in sys.path:
     sys.path.insert(0, str(LIB_PATH))
 
-from steamflow.menu import get_game_context_menu_entries, get_refund_menu_copy
+from steamflow.menu import (
+    get_game_context_menu_entries,
+    get_refund_menu_copy,
+    store_type_supports_community_links,
+)
 from steamflow.ui import SteamPluginUIMixin
 
 
@@ -71,6 +75,13 @@ class UIContextMenuHarness(SteamPluginUIMixin):
 
 
 class MenuTests(unittest.TestCase):
+    def test_community_links_are_unsupported_for_dlc_and_soundtrack_types(self):
+        for store_type in ("dlc", "music", "soundtrack", "MUSIC"):
+            with self.subTest(store_type=store_type):
+                self.assertFalse(store_type_supports_community_links(store_type))
+        self.assertTrue(store_type_supports_community_links("game"))
+        self.assertTrue(store_type_supports_community_links(""))
+
     def test_refund_menu_copy_uses_likely_wording(self):
         title, subtitle = get_refund_menu_copy("likely", "NEEDY GIRL OVERDOSE")
 
@@ -108,7 +119,7 @@ class MenuTests(unittest.TestCase):
         titles = [entry["title"] for entry in entries]
         self.assertIn("Support: Open Refund Page", titles)
         self.assertIn("Community: Search in CS.RIN", titles)
-        self.assertIn("Files: Uninstall Game", titles)
+        self.assertIn("File: Uninstall Game", titles)
 
         self.assertLess(
             titles.index("Store: Open in SteamDB"),
@@ -193,6 +204,33 @@ class MenuTests(unittest.TestCase):
         self.assertNotIn("Community: Search in CS.RIN", titles)
         self.assertNotIn("Files: Uninstall Game", titles)
 
+    def test_game_context_menu_hides_community_links_for_dlc(self):
+        entries = get_game_context_menu_entries(
+            app_id="12345",
+            name="Bonus Content",
+            install_path=None,
+            is_owned=False,
+            refund_state="",
+            default_icon=ICON,
+            steamdb_icon=ICON,
+            buy_icon=ICON,
+            csrin_icon=ICON,
+            guides_icon=ICON,
+            discussions_icon=ICON,
+            screenshot_icon=ICON,
+            refund_icon=ICON,
+            properties_icon=ICON,
+            location_icon=ICON,
+            download_icon=ICON,
+            trash_icon=ICON,
+            show_community_links=False,
+        )
+
+        titles = [entry["title"] for entry in entries]
+        self.assertNotIn("Community: Open Guides", titles)
+        self.assertNotIn("Community: Open Discussions", titles)
+        self.assertIn("Store: Open in Steam", titles)
+
     def test_game_context_menu_includes_install_for_owned_store_results(self):
         entries = get_game_context_menu_entries(
             app_id="570",
@@ -250,7 +288,14 @@ class MenuTests(unittest.TestCase):
         add_entry = next(entry for entry in entries if entry["title"] == "Store: Add to Steam Cart")
         self.assertEqual(add_entry["icon"], "buy")
         self.assertEqual(add_entry["method"], "add_to_steam_cart")
-        self.assertEqual(add_entry["parameters"], ["1462040", "76561198000000000"])
+        self.assertEqual(
+            add_entry["parameters"],
+            [
+                "1462040",
+                "76561198000000000",
+                "FINAL FANTASY VII REMAKE INTERGRADE",
+            ],
+        )
 
     def test_game_context_menu_hides_add_to_cart_without_store_gate(self):
         entries = get_game_context_menu_entries(
@@ -303,7 +348,10 @@ class MenuTests(unittest.TestCase):
         add_entry = next(entry for entry in entries if entry["title"] == "Store: Add to Wishlist")
         self.assertEqual(add_entry["icon"], "wishlist-add")
         self.assertEqual(add_entry["method"], "add_to_steam_wishlist")
-        self.assertEqual(add_entry["parameters"], ["1462040"])
+        self.assertEqual(
+            add_entry["parameters"],
+            ["1462040", None, "FINAL FANTASY VII REMAKE INTERGRADE"],
+        )
 
         entries = get_game_context_menu_entries(
             app_id="1462040",
@@ -329,7 +377,14 @@ class MenuTests(unittest.TestCase):
         )
 
         add_entry = next(entry for entry in entries if entry["title"] == "Store: Add to Wishlist")
-        self.assertEqual(add_entry["parameters"], ["1462040", "76561198000000000"])
+        self.assertEqual(
+            add_entry["parameters"],
+            [
+                "1462040",
+                "76561198000000000",
+                "FINAL FANTASY VII REMAKE INTERGRADE",
+            ],
+        )
 
     def test_game_context_menu_includes_remove_from_wishlist(self):
         entries = get_game_context_menu_entries(
@@ -449,6 +504,23 @@ class MenuTests(unittest.TestCase):
 
         titles = [item["Title"] for item in items]
         self.assertNotIn("Store: Add to Wishlist", titles)
+
+    def test_ui_context_menu_hides_community_links_for_soundtrack(self):
+        harness = UIContextMenuHarness()
+
+        items = harness.get_context_menu_items(
+            app_id="3514130",
+            name="NieR:Automata Original Soundtrack",
+            install_path=None,
+            is_owned=False,
+            result_source="store",
+            store_type="music",
+        )
+
+        titles = [item["Title"] for item in items]
+        self.assertNotIn("Community: Open Guides", titles)
+        self.assertNotIn("Community: Open Discussions", titles)
+        self.assertIn("Store: Open in Steam", titles)
 
     def test_ui_context_menu_hides_wishlist_when_api_key_is_unavailable(self):
         harness = UIContextMenuHarness()

@@ -7,17 +7,22 @@ class SteamPluginPathState:
     country_cache_file: object = None
     download_progress_cache_file: object = None
     feature_health_cache_file: object = None
+    smoke_safety_cache_file: object = None
+    smokeapi_state_cache_file: object = None
     app_details_cache_dir: object = None
     metric_cache_file: object = None
     wishlist_worker_lock_file: object = None
     owned_games_cache_file: object = None
     wishlist_cache_file: object = None
+    friends_cache_file: object = None
+    friend_favorites_cache_file: object = None
     secure_settings_dir: object = None
     avatar_cache_dir: object = None
     avatar_frame_cache_file: object = None
     profile_cache_file: object = None
     owned_api_key_file: object = None
     owned_api_key_meta_file: object = None
+    steam_deck_cache_file: object = None
 
 
 @dataclass
@@ -109,23 +114,49 @@ class SteamPluginRuntimeState:
     pending_wishlist_refresh: bool = False
 
 
+@dataclass
+class SteamPluginFriendsState:
+    friends_cache_loaded: bool = False
+    friends_items: list = field(default_factory=list)
+    friends_last_attempt: float = 0
+    friends_last_sync: float = 0
+    friends_steamid64: object = None
+    friends_last_error: str = ""
+    friend_favorites_cache_loaded: bool = False
+    friend_favorites_by_steamid: dict = field(default_factory=dict)
+
+
+@dataclass
+class SteamPluginSteamDeckState:
+    steam_deck_cache_loaded: bool = False
+    steam_deck_account_states: dict = field(default_factory=dict)
+    steam_deck_compatibility_cache: dict = field(default_factory=dict)
+    steam_deck_compatibility_last_failure: float = 0
+    pending_steam_deck_history_refresh: bool = False
+
+
 STATE_ATTR_GROUPS = {
     "path_state": (
         "cache_dir",
         "country_cache_file",
         "download_progress_cache_file",
         "feature_health_cache_file",
+        "smoke_safety_cache_file",
+        "smokeapi_state_cache_file",
         "app_details_cache_dir",
         "metric_cache_file",
         "wishlist_worker_lock_file",
         "owned_games_cache_file",
         "wishlist_cache_file",
+        "friends_cache_file",
+        "friend_favorites_cache_file",
         "secure_settings_dir",
         "avatar_cache_dir",
         "avatar_frame_cache_file",
         "profile_cache_file",
         "owned_api_key_file",
         "owned_api_key_meta_file",
+        "steam_deck_cache_file",
     ),
     "lifecycle_state": (
         "startup_initialized",
@@ -209,6 +240,23 @@ STATE_ATTR_GROUPS = {
         "wishlist_last_sync",
         "wishlist_steamid64",
         "pending_wishlist_refresh",
+    ),
+    "friends_state": (
+        "friends_cache_loaded",
+        "friends_items",
+        "friends_last_attempt",
+        "friends_last_sync",
+        "friends_steamid64",
+        "friends_last_error",
+        "friend_favorites_cache_loaded",
+        "friend_favorites_by_steamid",
+    ),
+    "steam_deck_state": (
+        "steam_deck_cache_loaded",
+        "steam_deck_account_states",
+        "steam_deck_compatibility_cache",
+        "steam_deck_compatibility_last_failure",
+        "pending_steam_deck_history_refresh",
     ),
 }
 

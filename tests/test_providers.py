@@ -257,6 +257,15 @@ class ProviderHarness:
     def build_wishlist_results(self, search_term=""):
         return [{"Title": "Wishlist"}]
 
+    def is_friends_query(self, search_term):
+        return search_term == "friends"
+
+    def get_friends_query_text(self, search_term):
+        return ""
+
+    def build_friends_results(self, search_term=""):
+        return [{"Title": "Friends"}]
+
     def is_switch_account_query(self, search_term):
         return False
 
@@ -298,6 +307,22 @@ class ProviderHarness:
 
     def get_wishlist_items(self):
         return [{"appid": "570"}], None
+
+    def load_friends_cache(self):
+        self.calls.append("load-friends")
+
+    def save_friends_cache(self):
+        self.calls.append("save-friends")
+
+    def clear_friends_cache(self):
+        self.calls.append("clear-friends")
+
+    def get_friends(self):
+        return [{"steamid64": "friend"}], None
+
+    def get_fresh_friends_playing_by_app(self):
+        self.calls.append("fresh-friends-playing")
+        return {"570": ["Alice"]}
 
     def build_action(self, method, *parameters):
         return {"method": method, "parameters": list(parameters)}
@@ -402,6 +427,9 @@ class ProviderTests(unittest.TestCase):
         providers.runtime.finish_metric_refresh("pending", "570")
         self.assertTrue(providers.commands.is_help_query("?"))
         self.assertEqual(providers.commands.build_help_results(), [{"Title": "Help"}])
+        self.assertTrue(providers.commands.is_friends_query("friends"))
+        self.assertEqual(providers.commands.get_friends_query_text("friends"), "")
+        self.assertEqual(providers.commands.build_friends_results(), [{"Title": "Friends"}])
         self.assertEqual(providers.commands.get_store_collection_query("deals"), "specials")
         self.assertEqual(providers.owned_api.normalize_key(" abcd "), "ABCD")
         providers.owned_api.save_owned_games_cache()
@@ -410,6 +438,11 @@ class ProviderTests(unittest.TestCase):
         providers.wishlist.save_cache()
         providers.wishlist.clear_cache()
         self.assertEqual(providers.wishlist.items(), ([{"appid": "570"}], None))
+        providers.friends.load_cache()
+        providers.friends.save_cache()
+        providers.friends.clear_cache()
+        self.assertEqual(providers.friends.items(), ([{"steamid64": "friend"}], None))
+        self.assertEqual(providers.friends.fresh_playing_by_app(), {"570": ["Alice"]})
         self.assertIn(("start-metric", "pending", "570", "refresh"), harness.calls)
         self.assertIn(("finish-metric", "pending", "570"), harness.calls)
         self.assertIn("save-owned", harness.calls)
@@ -417,6 +450,10 @@ class ProviderTests(unittest.TestCase):
         self.assertIn("load-wishlist", harness.calls)
         self.assertIn("save-wishlist", harness.calls)
         self.assertIn("clear-wishlist", harness.calls)
+        self.assertIn("load-friends", harness.calls)
+        self.assertIn("save-friends", harness.calls)
+        self.assertIn("clear-friends", harness.calls)
+        self.assertIn("fresh-friends-playing", harness.calls)
 
 
 if __name__ == "__main__":

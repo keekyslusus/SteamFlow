@@ -18,6 +18,8 @@ STEAM_SETTINGS_URI = "steam://open/settings"
 STEAM_FRIENDS_URI = "steam://open/friends"
 STEAM_STORE_SPECIALS_URL = "https://store.steampowered.com/search/?os=win&specials=1&ndl=1"
 STEAM_STORE_TOP_SELLERS_URL = "https://store.steampowered.com/search/?filter=topsellers&os=win"
+STEAMID64_ACCOUNT_ID_BASE = 76561197960265728
+MAX_STEAM_ACCOUNT_ID = (1 << 32) - 1
 STEAM_FRIENDS_STATUS_URIS = {
     "online": "steam://friends/status/online",
     "offline": "steam://friends/status/offline",
@@ -65,6 +67,54 @@ def build_steam_store_url(app_id):
 
 def build_steam_openurl_uri(url):
     return f"steam://openurl/{url}"
+
+
+def build_steam_friend_message_uri(steamid64):
+    return f"steam://friends/message/{str(steamid64 or '').strip()}"
+
+
+def build_steam_friend_join_game_uri(steamid64):
+    return f"steam://friends/joingame/{str(steamid64 or '').strip()}"
+
+
+def build_steam_join_lobby_uri(app_id, lobby_id, steamid64):
+    return (
+        "steam://joinlobby/"
+        f"{str(app_id or '').strip()}/"
+        f"{str(lobby_id or '').strip()}/"
+        f"{str(steamid64 or '').strip()}"
+    )
+
+
+def steamid64_to_account_id(steamid64):
+    try:
+        account_id = int(str(steamid64 or "").strip()) - STEAMID64_ACCOUNT_ID_BASE
+    except (TypeError, ValueError) as error:
+        raise ValueError("Invalid SteamID64") from error
+    if not 0 <= account_id <= MAX_STEAM_ACCOUNT_ID:
+        raise ValueError("Invalid SteamID64")
+    return account_id
+
+
+def build_steam_trade_offer_url(steamid64):
+    account_id = steamid64_to_account_id(steamid64)
+    return f"https://steamcommunity.com/tradeoffer/new/?partner={account_id}"
+
+
+def build_steam_trade_offer_uri(steamid64):
+    return build_steam_openurl_uri(build_steam_trade_offer_url(steamid64))
+
+
+def build_steam_profile_url(steamid64):
+    return f"https://steamcommunity.com/profiles/{str(steamid64 or '').strip()}/"
+
+
+def build_steam_profile_uri(steamid64):
+    return build_steam_openurl_uri(build_steam_profile_url(steamid64))
+
+
+def build_steam_friend_game_uri(gameid):
+    return build_steam_store_uri(gameid)
 
 
 def build_steam_guides_uri(app_id):

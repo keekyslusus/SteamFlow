@@ -21,17 +21,22 @@ from .constants import STEAMFLOW_CONFIG
 from .core import SteamPluginCoreMixin
 from .download_control import SteamPluginDownloadControlMixin
 from .feature_health import SteamPluginFeatureHealthMixin
+from .friends import SteamPluginFriendsMixin
 from .local import SteamPluginLocalMixin
 from .mixin_contracts import validate_declared_mixin_contracts
 from .profile import SteamPluginProfileMixin
 from .providers import SteamPluginProviders
 from .pyflow_compat import SteamFlowPluginBase
+from .smokeapi import SteamPluginSmokeAPIMixin
+from .steam_deck import SteamPluginSteamDeckMixin
 from .state import (
     STATE_ATTR_GROUPS,
     SteamPluginLifecycleState,
+    SteamPluginFriendsState,
     SteamPluginLocalState,
     SteamPluginPathState,
     SteamPluginRuntimeState,
+    SteamPluginSteamDeckState,
     build_state_attr_property,
 )
 from .storage import SteamPluginStorageMixin
@@ -52,6 +57,7 @@ except ImportError:
 
 
 class SteamPluginRuntimeMixin(
+    SteamPluginSteamDeckMixin,
     SteamPluginStoreMixin,
     SteamPluginStoreMetricsMixin,
     SteamPluginProfileMixin,
@@ -59,6 +65,7 @@ class SteamPluginRuntimeMixin(
     SteamPluginDownloadControlMixin,
     SteamPluginCartMixin,
     SteamPluginFeatureHealthMixin,
+    SteamPluginSmokeAPIMixin,
     SteamPluginLocalMixin,
     SteamPluginStorageMixin,
     SteamPluginCoreMixin,
@@ -69,6 +76,7 @@ class SteamPluginRuntimeMixin(
 
 class SteamPluginExperienceMixin(
     SteamPluginUIQueryMixin,
+    SteamPluginFriendsMixin,
     SteamPluginWishlistMixin,
     SteamPluginUICommandsMixin,
     SteamPluginUIMixin,
@@ -90,6 +98,8 @@ class SteamPlugin(
         object.__setattr__(self, "lifecycle_state", SteamPluginLifecycleState())
         object.__setattr__(self, "local_state", SteamPluginLocalState())
         object.__setattr__(self, "runtime_state", SteamPluginRuntimeState())
+        object.__setattr__(self, "friends_state", SteamPluginFriendsState())
+        object.__setattr__(self, "steam_deck_state", SteamPluginSteamDeckState())
         self.plugin_dir = PACKAGE_ROOT
         self.background_task_manager = BackgroundTaskManager()
         self.providers = SteamPluginProviders(self)
@@ -106,12 +116,14 @@ class SteamPlugin(
         self.DEFAULT_ICON = str(self.plugin_dir / self.CONFIG.icons.default_icon)
         self.BROWSER_ICON = str(self.plugin_dir / self.CONFIG.icons.browser_icon)
         self.BUY_ICON = str(self.plugin_dir / self.CONFIG.icons.buy_icon)
+        self.CHAT_ICON = str(self.plugin_dir / self.CONFIG.icons.chat_icon)
         self.CLIPBOARD_ICON = str(self.plugin_dir / self.CONFIG.icons.clipboard_icon)
         self.COMMUNITY_ICON = str(self.plugin_dir / self.CONFIG.icons.community_icon)
         self.CSRIN_ICON = str(self.plugin_dir / self.CONFIG.icons.csrin_icon)
         self.DEALS_ICON = str(self.plugin_dir / self.CONFIG.icons.deals_icon)
         self.DOWNLOAD_ICON = str(self.plugin_dir / self.CONFIG.icons.download_icon)
         self.FEATURE_HEALTH_RESET_ICON = str(self.plugin_dir / self.CONFIG.icons.feature_health_reset_icon)
+        self.FRIENDS_ICON = str(self.plugin_dir / self.CONFIG.icons.friends_icon)
         self.DISCUSSIONS_ICON = str(self.plugin_dir / self.CONFIG.icons.discussions_icon)
         self.GUIDES_ICON = str(self.plugin_dir / self.CONFIG.icons.guides_icon)
         self.LOCATION_ICON = str(self.plugin_dir / self.CONFIG.icons.location_icon)
@@ -123,8 +135,10 @@ class SteamPlugin(
         self.REFUND_ICON = str(self.plugin_dir / self.CONFIG.icons.refund_icon)
         self.SCREENSHOT_ICON = str(self.plugin_dir / self.CONFIG.icons.screenshot_icon)
         self.SETTINGS_ICON = str(self.plugin_dir / self.CONFIG.icons.settings_icon)
+        self.SMOKEAPI_ICON = str(self.plugin_dir / self.CONFIG.icons.smokeapi_icon)
         self.STEAMDB_ICON = str(self.plugin_dir / self.CONFIG.icons.steamdb_icon)
         self.TOP_SELLERS_ICON = str(self.plugin_dir / self.CONFIG.icons.top_sellers_icon)
+        self.TRADE_ICON = str(self.plugin_dir / self.CONFIG.icons.trade_icon)
         self.TRASH_ICON = str(self.plugin_dir / self.CONFIG.icons.trash_icon)
         self.WARNING_ICON = str(self.plugin_dir / self.CONFIG.icons.warning_icon)
         self.WISHLIST_ICON = str(self.plugin_dir / self.CONFIG.icons.wishlist_icon)
@@ -134,17 +148,22 @@ class SteamPlugin(
         self.country_cache_file = self.plugin_dir / "cache_country.json"
         self.download_progress_cache_file = self.plugin_dir / "cache_download_progress.json"
         self.feature_health_cache_file = self.plugin_dir / "cache_feature_health.json"
+        self.smoke_safety_cache_file = self.plugin_dir / "cache_smoke_safety.json"
+        self.smokeapi_state_cache_file = self.plugin_dir / "cache_smoke_state.json"
         self.app_details_cache_dir = self.plugin_dir / APP_DETAILS_CACHE_DIR_NAME
         self.metric_cache_file = self.plugin_dir / "cache_metric.json"
         self.wishlist_worker_lock_file = self.plugin_dir / "steam_wishlist_worker.lock"
         self.owned_games_cache_file = self.plugin_dir / "cache_owned_games.json"
         self.wishlist_cache_file = self.plugin_dir / "cache_wishlist.json"
         self.secure_settings_dir = Path(self.settings_path).parent
+        self.friends_cache_file = self.secure_settings_dir / "cache_friends.json"
+        self.friend_favorites_cache_file = self.secure_settings_dir / "cache_friend_favorites.json"
         self.avatar_cache_dir = self.secure_settings_dir / "cache_avatar"
         self.avatar_frame_cache_file = self.secure_settings_dir / "cache_avatar_frame.json"
         self.profile_cache_file = self.secure_settings_dir / "cache_profile.json"
         self.owned_api_key_file = self.secure_settings_dir / "owned_api_key.bin"
         self.owned_api_key_meta_file = self.secure_settings_dir / "owned_api_key.meta.json"
+        self.steam_deck_cache_file = self.secure_settings_dir / "cache_steam_deck.json"
         self.secure_settings_dir.mkdir(parents=True, exist_ok=True)
         self.avatar_cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(exist_ok=True)
@@ -153,6 +172,8 @@ class SteamPlugin(
         object.__setattr__(self, "lifecycle_state", SteamPluginLifecycleState())
         object.__setattr__(self, "local_state", SteamPluginLocalState())
         object.__setattr__(self, "runtime_state", SteamPluginRuntimeState())
+        object.__setattr__(self, "friends_state", SteamPluginFriendsState())
+        object.__setattr__(self, "steam_deck_state", SteamPluginSteamDeckState())
 
     def _initialize_runtime_state(self):
         if self.runtime_initialized:
@@ -201,11 +222,19 @@ class SteamPlugin(
         self.pending_player_count_refresh = set()
         self.pending_review_score_refresh = set()
         self.pending_app_details_refresh = set()
+        self.steam_deck_cache_loaded = False
+        self.steam_deck_account_states = {}
+        self.steam_deck_compatibility_cache = {}
+        self.steam_deck_compatibility_last_failure = 0
+        self.pending_steam_deck_history_refresh = False
         self.load_metric_caches()
         self.cleanup_app_details_cache_files()
         self.load_owned_api_key_metadata()
         self.load_owned_games_cache()
+        self.load_steam_deck_cache()
         self.load_wishlist_cache()
+        self.load_friends_cache()
+        self.load_friend_favorites_cache()
         self.runtime_initialized = True
 
     def _initialize_steam_state(self):
@@ -224,6 +253,7 @@ class SteamPlugin(
         self.start_daemon_task(self.cleanup_image_cache)
         self.schedule_owned_games_refresh()
         self.schedule_active_profile_summary_refresh()
+        self.schedule_steam_deck_history_refresh()
 
     def _validate_mixin_contracts(self):
         validate_declared_mixin_contracts(self)

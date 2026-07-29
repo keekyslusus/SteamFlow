@@ -24,9 +24,10 @@ from .cart_service import (
     select_cart_package_from_app_details,
     start_steam_cart_worker_process,
 )
-from .hooks import get_secure_settings_dir, log_exception_if_supported
+from .hooks import get_secure_settings_dir, log_exception_if_supported, show_message_if_supported
 from .localization import plugin_tr
 from .providers import get_plugin_providers
+from .worker_feedback import start_worker_feedback_monitor
 
 
 class SteamPluginCartMixin:
@@ -34,21 +35,48 @@ class SteamPluginCartMixin:
         "plugin_dir",
         "settings_path",
     )
-    REQUIRED_PLUGIN_PROVIDERS = ("account",)
+    REQUIRED_PLUGIN_PROVIDERS = ("account", "store")
 
     @property
     def cart_providers(self):
         return get_plugin_providers(self)
 
     def start_steam_cart_worker(self, steamid64, app_id):
-        start_steam_cart_worker_process(
+        return start_steam_cart_worker_process(
             self.plugin_dir,
             get_secure_settings_dir(self),
             steamid64,
             app_id,
         )
 
-    def add_to_steam_cart(self, app_id, steamid64=None):
+    def _resolve_cart_game_name(self, app_id, name=None):
+        name = str(name or "").strip()
+        if name:
+            return name
+        try:
+            metadata = self.cart_providers.store.app_details_metadata(
+                app_id,
+                allow_network_on_miss=False,
+            )
+        except Exception:
+            log_exception_if_supported(self, f"Failed to resolve game name for app {app_id}")
+            metadata = None
+        if metadata:
+            name = str(metadata.get("name") or "").strip()
+        if name:
+            return name
+        return plugin_tr(self, "cart.game_fallback", app_id=app_id)
+
+    def _show_cart_worker_result(self, name, succeeded):
+        message_key = "cart.add_succeeded" if succeeded else "cart.add_failed_result"
+        show_message_if_supported(
+            self,
+            plugin_tr(self, "cart.feedback_title"),
+            plugin_tr(self, message_key, name=name),
+            getattr(self, "BUY_ICON", ""),
+        )
+
+    def add_to_steam_cart(self, app_id, steamid64=None, name=None):
         app_id = str(app_id or "").strip()
         if not app_id:
             return plugin_tr(self, "action.missing_app_id")
@@ -65,8 +93,21 @@ class SteamPluginCartMixin:
             return plugin_tr(self, "action.no_active_account")
 
         try:
-            self.start_steam_cart_worker(steamid64, app_id)
+            name = self._resolve_cart_game_name(app_id, name=name)
+            worker_process = self.start_steam_cart_worker(steamid64, app_id)
+            start_worker_feedback_monitor(
+                self,
+                worker_process,
+                lambda succeeded: self._show_cart_worker_result(name, succeeded),
+            )
             return plugin_tr(self, "cart.adding", app_id=app_id)
         except Exception as error:
             log_exception_if_supported(self, f"Failed to start Steam cart worker for app {app_id}")
-            return plugin_tr(self, "cart.add_failed", error=str(error))
+            message = plugin_tr(self, "cart.add_failed", error=str(error))
+            show_message_if_supported(
+                self,
+                plugin_tr(self, "cart.feedback_title"),
+                message,
+                getattr(self, "BUY_ICON", ""),
+            )
+            return message

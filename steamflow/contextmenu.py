@@ -10,23 +10,33 @@ from .app_details import (
 )
 from .cart import SteamPluginCartMixin
 from .feature_health import feature_enabled
+from .friend_join_service import FriendJoinCoordinator
 from .hooks import get_secure_settings_dir
 from .localization import Localizer, plugin_tr, resolve_configured_locale
 from .menu import (
+    get_friend_context_menu_entries,
+    get_friend_join_context_menu_entries,
     get_game_context_menu_entries,
     get_steam_client_context_menu_entries,
     is_store_action_result_source,
     is_store_cart_result_source,
+    store_type_supports_community_links,
 )
 from .os_integration import resolve_steam_install_path_from_registry
 from .pyflow_compat import SteamFlowPluginBase
+from .smokeapi import SteamPluginSmokeAPIMixin
 from .wishlist_mutation_service import start_steam_wishlist_mutation_worker_process
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 UNSET = object()
 
 
-class SteamContextMenuPlugin(SteamPluginCartMixin, SteamPluginActionsMixin, SteamFlowPluginBase):
+class SteamContextMenuPlugin(
+    SteamPluginSmokeAPIMixin,
+    SteamPluginCartMixin,
+    SteamPluginActionsMixin,
+    SteamFlowPluginBase,
+):
     @cached_property
     def app_details_cache_store(self):
         return MetricAppDetailsCache(self.plugin_dir / APP_DETAILS_CACHE_DIR_NAME)
@@ -36,6 +46,26 @@ class SteamContextMenuPlugin(SteamPluginCartMixin, SteamPluginActionsMixin, Stea
         return AppDetailsMetadataProvider(
             self.fetch_app_details_metadata,
             cache=self.app_details_cache_store,
+        )
+
+    @cached_property
+    def friend_join_coordinator(self):
+        return FriendJoinCoordinator(
+            self.plugin_dir,
+            get_secure_settings_dir(self),
+            self.steam_path,
+        )
+
+    def get_joinable_friends_for_app(
+        self,
+        app_id,
+        only_steamid64=None,
+        force_refresh=False,
+    ):
+        return self.friend_join_coordinator.get_candidates(
+            app_id,
+            only_steamid64=only_steamid64,
+            force_refresh=force_refresh,
         )
 
     def fetch_app_details_metadata(self, app_id):
@@ -107,6 +137,7 @@ class SteamContextMenuPlugin(SteamPluginCartMixin, SteamPluginActionsMixin, Stea
         self.plugin_dir = PACKAGE_ROOT
         self._steam_path = UNSET
         self.buy_icon = str(self.plugin_dir / "icons" / "buy.png")
+        self.chat_icon = str(self.plugin_dir / "icons" / "chat.png")
         self.community_icon = str(self.plugin_dir / "icons" / "community.png")
         self.csrin_icon = str(self.plugin_dir / "icons" / "csrin.png")
         self.default_icon = str(self.plugin_dir / "icons" / "steam.png")
@@ -114,18 +145,24 @@ class SteamContextMenuPlugin(SteamPluginCartMixin, SteamPluginActionsMixin, Stea
         self.discussions_icon = str(self.plugin_dir / "icons" / "discussions.png")
         self.download_icon = str(self.plugin_dir / "icons" / "download.png")
         self.guides_icon = str(self.plugin_dir / "icons" / "guides.png")
+        self.friends_icon = str(self.plugin_dir / "icons" / "friends.png")
+        self.join_party_icon = str(self.plugin_dir / "icons" / "join_party.png")
         self.location_icon = str(self.plugin_dir / "icons" / "location.png")
         self.properties_icon = str(self.plugin_dir / "icons" / "properties.png")
         self.refund_icon = str(self.plugin_dir / "icons" / "refund.png")
         self.screenshot_icon = str(self.plugin_dir / "icons" / "screenshot.png")
         self.settings_icon = str(self.plugin_dir / "icons" / "settings.png")
+        self.smokeapi_icon = str(self.plugin_dir / "icons" / "smokeapi.png")
         self.steamdb_icon = str(self.plugin_dir / "icons" / "steamdb.png")
         self.top_sellers_icon = str(self.plugin_dir / "icons" / "top_sellers.png")
+        self.trade_icon = str(self.plugin_dir / "icons" / "trade.png")
         self.trash_icon = str(self.plugin_dir / "icons" / "trash.png")
         self.wishlist_icon = str(self.plugin_dir / "icons" / "wishlist.png")
         self.wishlist_add_icon = str(self.plugin_dir / "icons" / "wl_add.png")
         self.wishlist_remove_icon = str(self.plugin_dir / "icons" / "wl_remove.png")
         self.feature_health_cache_file = self.plugin_dir / "cache_feature_health.json"
+        self.smoke_safety_cache_file = self.plugin_dir / "cache_smoke_safety.json"
+        self.smokeapi_state_cache_file = self.plugin_dir / "cache_smoke_state.json"
 
     @cached_property
     def logfile(self):
@@ -165,7 +202,7 @@ class SteamContextMenuPlugin(SteamPluginCartMixin, SteamPluginActionsMixin, Stea
         return bool(value)
 
     def start_steam_wishlist_mutation_worker(self, steamid64, app_id, action):
-        start_steam_wishlist_mutation_worker_process(
+        return start_steam_wishlist_mutation_worker_process(
             self.plugin_dir,
             get_secure_settings_dir(self),
             steamid64,
@@ -173,7 +210,7 @@ class SteamContextMenuPlugin(SteamPluginCartMixin, SteamPluginActionsMixin, Stea
             action,
         )
 
-    def mutate_steam_wishlist(self, app_id, action, steamid64=None):
+    def mutate_steam_wishlist(self, app_id, action, steamid64=None, name=None):
         app_id = str(app_id or "").strip()
         action = str(action or "").strip().lower()
         steamid64 = str(steamid64 or "").strip()
@@ -192,11 +229,11 @@ class SteamContextMenuPlugin(SteamPluginCartMixin, SteamPluginActionsMixin, Stea
         except Exception as error:
             return plugin_tr(self, "wishlist.mutation_failed", error=str(error))
 
-    def add_to_steam_wishlist(self, app_id, steamid64=None):
-        return self.mutate_steam_wishlist(app_id, "add", steamid64=steamid64)
+    def add_to_steam_wishlist(self, app_id, steamid64=None, name=None):
+        return self.mutate_steam_wishlist(app_id, "add", steamid64=steamid64, name=name)
 
-    def remove_from_steam_wishlist(self, app_id, steamid64=None):
-        return self.mutate_steam_wishlist(app_id, "remove", steamid64=steamid64)
+    def remove_from_steam_wishlist(self, app_id, steamid64=None, name=None):
+        return self.mutate_steam_wishlist(app_id, "remove", steamid64=steamid64, name=name)
 
     def context_menu(self, data):
         if not isinstance(data, dict):
@@ -211,6 +248,33 @@ class SteamContextMenuPlugin(SteamPluginCartMixin, SteamPluginActionsMixin, Stea
                     self.wishlist_icon,
                     self.top_sellers_icon,
                     self.deals_icon,
+                    tr=getattr(self, "tr", None),
+                )
+            )
+            return
+
+        if data.get("menu") == "friend":
+            steamid64 = str(data.get("steamid64", "") or "")
+            gameid = str(data.get("gameid", "") or "")
+            join_entries = self.get_joinable_friends_for_app(
+                gameid,
+                only_steamid64=steamid64,
+            )
+            self._add_menu_entries(
+                get_friend_join_context_menu_entries(
+                    join_entries,
+                    self.join_party_icon,
+                    tr=getattr(self, "tr", None),
+                )
+                + get_friend_context_menu_entries(
+                    steamid64,
+                    data.get("name") or plugin_tr(self, "friends.unknown"),
+                    gameid,
+                    self.chat_icon,
+                    self.community_icon,
+                    self.default_icon,
+                    trade_icon=self.trade_icon,
+                    game_name=data.get("game_name", ""),
                     tr=getattr(self, "tr", None),
                 )
             )
@@ -262,9 +326,29 @@ class SteamContextMenuPlugin(SteamPluginCartMixin, SteamPluginActionsMixin, Stea
             and feature_enabled(feature_health_cache_file, "steam_session_token")
             and feature_enabled(feature_health_cache_file, "steam_wishlist")
         )
+        smokeapi_menu_state = self.get_smokeapi_menu_state(app_id, install_path)
+        friends_playing_count = data.get("friends_playing_count")
+        friends_playing_known = friends_playing_count is not None
+        try:
+            has_friends_playing = int(friends_playing_count or 0) > 0
+        except (TypeError, ValueError):
+            has_friends_playing = False
+        join_entries = (
+            self.get_joinable_friends_for_app(app_id)
+            if (
+                install_path
+                and (not friends_playing_known or has_friends_playing)
+            )
+            else []
+        )
 
         self._add_menu_entries(
-            get_game_context_menu_entries(
+            get_friend_join_context_menu_entries(
+                join_entries,
+                self.join_party_icon,
+                tr=getattr(self, "tr", None),
+            )
+            + get_game_context_menu_entries(
                 app_id,
                 name,
                 install_path,
@@ -288,9 +372,14 @@ class SteamContextMenuPlugin(SteamPluginCartMixin, SteamPluginActionsMixin, Stea
                 can_add_to_cart=can_add_to_cart,
                 can_add_to_wishlist=can_add_to_wishlist,
                 can_remove_from_wishlist=can_remove_from_wishlist,
+                show_community_links=store_type_supports_community_links(store_type),
                 show_steamdb=self.get_setting_bool("show_steamdb_context_menu", True),
                 show_csrin=self.get_setting_bool("show_csrin_context_menu", True),
                 steamid64=steamid64,
+                smokeapi_action=smokeapi_menu_state["action"],
+                smokeapi_safety=smokeapi_menu_state["safety"],
+                smokeapi_signals=smokeapi_menu_state["signals"],
+                smokeapi_icon=getattr(self, "smokeapi_icon", self.properties_icon),
                 tr=getattr(self, "tr", None),
             )
         )

@@ -26,6 +26,7 @@ class ContextMenuHarness(SteamContextMenuPlugin):
         self.plugin_dir = Path(plugin_dir)
         self._steam_path = None
         self.buy_icon = "buy"
+        self.chat_icon = "chat"
         self.default_icon = "default"
         self.community_icon = "community"
         self.csrin_icon = "csrin"
@@ -33,6 +34,8 @@ class ContextMenuHarness(SteamContextMenuPlugin):
         self.download_icon = "download"
         self.discussions_icon = "discussions"
         self.guides_icon = "guides"
+        self.friends_icon = "friends"
+        self.join_party_icon = "join-party"
         self.location_icon = "location"
         self.properties_icon = "properties"
         self.refund_icon = "refund"
@@ -40,6 +43,7 @@ class ContextMenuHarness(SteamContextMenuPlugin):
         self.settings_icon = "settings"
         self.steamdb_icon = "steamdb"
         self.top_sellers_icon = "top-sellers"
+        self.trade_icon = "trade"
         self.trash_icon = "trash"
         self.wishlist_icon = "wishlist"
         self.wishlist_add_icon = "wishlist-add"
@@ -47,6 +51,8 @@ class ContextMenuHarness(SteamContextMenuPlugin):
         self.fetch_calls = []
         self.items = []
         self.started_mutation_workers = []
+        self.join_candidates_by_app = {}
+        self.join_candidate_calls = []
         self._settings = {"language": "English"}
 
     def add_item(self, **kwargs):
@@ -59,8 +65,203 @@ class ContextMenuHarness(SteamContextMenuPlugin):
     def start_steam_wishlist_mutation_worker(self, steamid64, app_id, action):
         self.started_mutation_workers.append((steamid64, app_id, action))
 
+    def get_joinable_friends_for_app(
+        self,
+        app_id,
+        only_steamid64=None,
+        force_refresh=False,
+    ):
+        self.join_candidate_calls.append(
+            (str(app_id), only_steamid64, force_refresh)
+        )
+        candidates = list(self.join_candidates_by_app.get(str(app_id), []))
+        if only_steamid64:
+            candidates = [
+                candidate
+                for candidate in candidates
+                if candidate["steamid64"] == str(only_steamid64)
+            ]
+        return candidates
+
 
 class ContextMenuRefundTests(unittest.TestCase):
+    def test_friend_context_menu_has_chat_profile_and_current_game(self):
+        with TemporaryDirectory() as temp_dir:
+            plugin = ContextMenuHarness(temp_dir)
+
+            plugin.context_menu(
+                {
+                    "menu": "friend",
+                    "steamid64": "76561199268740725",
+                    "name": "Alice",
+                    "gameid": "570",
+                    "game_name": "Dota 2",
+                }
+            )
+
+            self.assertEqual(
+                [item["method"] for item in plugin.items],
+                [
+                    "open_steam_friend_chat",
+                    "open_steam_friend_profile",
+                    "open_steam_friend_trade_offer",
+                    "open_steam_friend_game",
+                ],
+            )
+            self.assertEqual(plugin.items[0]["parameters"], ["76561199268740725"])
+            self.assertEqual(plugin.items[0]["icon"], "chat")
+            self.assertEqual(plugin.items[2]["icon"], "trade")
+            self.assertEqual(plugin.items[3]["subtitle"], "Open the Steam store page for Dota 2")
+
+    def test_friend_context_menu_prepends_join_when_session_is_joinable(self):
+        with TemporaryDirectory() as temp_dir:
+            plugin = ContextMenuHarness(temp_dir)
+            plugin.join_candidates_by_app["570"] = [
+                {
+                    "steamid64": "76561199268740725",
+                    "name": "Alice",
+                    "app_id": "570",
+                }
+            ]
+
+            plugin.context_menu(
+                {
+                    "menu": "friend",
+                    "steamid64": "76561199268740725",
+                    "name": "Alice",
+                    "gameid": "570",
+                    "game_name": "Dota 2",
+                }
+            )
+
+            self.assertEqual(plugin.items[0]["method"], "join_steam_friend_game")
+            self.assertEqual(plugin.items[0]["title"], "Friend: Join Alice's Game")
+            self.assertEqual(
+                plugin.items[0]["parameters"],
+                ["76561199268740725", "570"],
+            )
+            self.assertEqual(plugin.items[0]["icon"], "join-party")
+
+    def test_home_game_context_menu_lists_each_joinable_friend(self):
+        with TemporaryDirectory() as temp_dir:
+            plugin = ContextMenuHarness(temp_dir)
+            plugin.join_candidates_by_app["570"] = [
+                {
+                    "steamid64": "76561199268740725",
+                    "name": "Alice",
+                    "app_id": "570",
+                },
+                {
+                    "steamid64": "76561198000000000",
+                    "name": "Bob",
+                    "app_id": "570",
+                },
+            ]
+
+            plugin.context_menu(
+                {
+                    "app_id": "570",
+                    "name": "Dota 2",
+                    "install_path": "C:/Games/Dota 2",
+                    "is_owned": True,
+                    "friends_playing_count": 2,
+                }
+            )
+
+            join_items = [
+                item
+                for item in plugin.items
+                if item["method"] == "join_steam_friend_game"
+            ]
+            self.assertEqual(
+                [item["title"] for item in join_items],
+                ["Friend: Join Alice's Game", "Friend: Join Bob's Game"],
+            )
+
+    def test_home_game_context_menu_skips_join_when_no_friend_is_playing(self):
+        with TemporaryDirectory() as temp_dir:
+            plugin = ContextMenuHarness(temp_dir)
+
+            plugin.context_menu(
+                {
+                    "app_id": "570",
+                    "name": "Dota 2",
+                    "install_path": "C:/Games/Dota 2",
+                    "is_owned": True,
+                    "friends_playing_count": 0,
+                }
+            )
+
+            self.assertEqual(plugin.join_candidate_calls, [])
+            self.assertNotIn(
+                "join_steam_friend_game",
+                [item["method"] for item in plugin.items],
+            )
+
+    def test_home_free_game_context_menu_uses_current_account_local_data(self):
+        with TemporaryDirectory() as temp_dir:
+            plugin = ContextMenuHarness(temp_dir)
+            plugin.join_candidates_by_app["570"] = [
+                {
+                    "steamid64": "76561199268740725",
+                    "name": "Alice",
+                    "app_id": "570",
+                }
+            ]
+
+            plugin.context_menu(
+                {
+                    "app_id": "570",
+                    "name": "Dota 2",
+                    "install_path": "C:/Games/Dota 2",
+                    "is_owned": False,
+                    "has_current_account_local_data": True,
+                    "friends_playing_count": 1,
+                }
+            )
+
+            self.assertEqual(plugin.join_candidate_calls, [("570", None, False)])
+            self.assertEqual(plugin.items[0]["method"], "join_steam_friend_game")
+
+    def test_home_game_context_menu_skips_join_check_without_install(self):
+        with TemporaryDirectory() as temp_dir:
+            plugin = ContextMenuHarness(temp_dir)
+
+            plugin.context_menu(
+                {
+                    "app_id": "570",
+                    "name": "Dota 2",
+                    "install_path": None,
+                    "is_owned": True,
+                }
+            )
+
+            self.assertEqual(plugin.join_candidate_calls, [])
+            self.assertNotIn(
+                "join_steam_friend_game",
+                [item["method"] for item in plugin.items],
+            )
+
+    def test_home_installed_game_delegates_ownership_verification(self):
+        with TemporaryDirectory() as temp_dir:
+            plugin = ContextMenuHarness(temp_dir)
+
+            plugin.context_menu(
+                {
+                    "app_id": "1782210",
+                    "name": "Crab Game",
+                    "install_path": "C:/Games/Crab Game",
+                    "is_owned": False,
+                    "has_current_account_local_data": False,
+                    "friends_playing_count": 1,
+                }
+            )
+
+            self.assertEqual(
+                plugin.join_candidate_calls,
+                [("1782210", None, False)],
+            )
+
     def test_existing_refund_state_short_circuits_everything(self):
         with TemporaryDirectory() as temp_dir:
             plugin = ContextMenuHarness(temp_dir)
@@ -156,9 +357,40 @@ class ContextMenuRefundTests(unittest.TestCase):
             cart_items = [item for item in plugin.items if item["title"] == "Store: Add to Steam Cart"]
             self.assertEqual(len(cart_items), 1)
             self.assertEqual(cart_items[0]["method"], "add_to_steam_cart")
-            self.assertEqual(cart_items[0]["parameters"], ["1462040", "76561198000000000"])
+            self.assertEqual(
+                cart_items[0]["parameters"],
+                [
+                    "1462040",
+                    "76561198000000000",
+                    "FINAL FANTASY VII REMAKE INTERGRADE",
+                ],
+            )
 
-    def test_store_context_menu_uses_configured_language(self):
+    def test_store_additional_content_context_menu_hides_community_links(self):
+        cases = [
+            ("12345", "Bonus Content", "dlc"),
+            ("3514130", "NieR:Automata Original Soundtrack", "music"),
+            ("67890", "Legacy Soundtrack Type", "soundtrack"),
+        ]
+        for app_id, name, store_type in cases:
+            with self.subTest(store_type=store_type), TemporaryDirectory() as temp_dir:
+                plugin = ContextMenuHarness(temp_dir)
+
+                plugin.context_menu(
+                    {
+                        "app_id": app_id,
+                        "name": name,
+                        "result_source": "store",
+                        "store_type": store_type,
+                    }
+                )
+
+                titles = [item["title"] for item in plugin.items]
+                self.assertNotIn("Community: Open Guides", titles)
+                self.assertNotIn("Community: Open Discussions", titles)
+                self.assertIn("Store: Open in Steam", titles)
+
+    def test_store_context_menu_ignores_disabled_language_setting(self):
         with TemporaryDirectory() as temp_dir:
             plugin = ContextMenuHarness(temp_dir)
             plugin._settings = {"language": "Russian"}
@@ -175,10 +407,10 @@ class ContextMenuRefundTests(unittest.TestCase):
             )
 
             titles = [item["title"] for item in plugin.items]
-            self.assertIn("Магазин: добавить в корзину Steam", titles)
-            self.assertIn("Магазин: открыть в Steam", titles)
+            self.assertIn("Store: Add to Steam Cart", titles)
+            self.assertIn("Store: Open in Steam", titles)
 
-    def test_steam_client_context_menu_uses_configured_language(self):
+    def test_steam_client_context_menu_ignores_disabled_language_setting(self):
         with TemporaryDirectory() as temp_dir:
             plugin = ContextMenuHarness(temp_dir)
             plugin._settings = {"language": "Russian"}
@@ -186,8 +418,8 @@ class ContextMenuRefundTests(unittest.TestCase):
             plugin.context_menu({"menu": "steam_client", "name": "Steam"})
 
             titles = [item["title"] for item in plugin.items]
-            self.assertIn("Steam: открыть библиотеку", titles)
-            self.assertIn("Магазин: открыть список желаемого", titles)
+            self.assertIn("Steam: Open Library", titles)
+            self.assertIn("Store: Open Wishlist", titles)
 
     def test_local_context_menu_does_not_add_cart_entry(self):
         with TemporaryDirectory() as temp_dir:
@@ -223,7 +455,14 @@ class ContextMenuRefundTests(unittest.TestCase):
             wishlist_items = [item for item in plugin.items if item["title"] == "Store: Add to Wishlist"]
             self.assertEqual(len(wishlist_items), 1)
             self.assertEqual(wishlist_items[0]["method"], "add_to_steam_wishlist")
-            self.assertEqual(wishlist_items[0]["parameters"], ["1462040", "76561198000000000"])
+            self.assertEqual(
+                wishlist_items[0]["parameters"],
+                [
+                    "1462040",
+                    "76561198000000000",
+                    "FINAL FANTASY VII REMAKE INTERGRADE",
+                ],
+            )
             self.assertEqual(wishlist_items[0]["icon"], "wishlist-add")
 
     def test_store_context_menu_allows_wishlist_entry_for_coming_soon_game(self):
@@ -390,6 +629,17 @@ class ContextMenuRefundTests(unittest.TestCase):
             plugin_class = main.get_plugin_class()
 
             self.assertNotEqual(plugin_class.__name__, "SteamContextMenuPlugin")
+        finally:
+            sys.argv = original_argv
+
+    def test_join_action_uses_lightweight_context_plugin(self):
+        original_argv = sys.argv[:]
+        try:
+            sys.argv = ["main.py", json.dumps({"method": "join_steam_friend_game"})]
+
+            plugin_class = main.get_plugin_class()
+
+            self.assertEqual(plugin_class.__name__, "SteamContextMenuPlugin")
         finally:
             sys.argv = original_argv
 

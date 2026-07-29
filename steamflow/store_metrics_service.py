@@ -45,6 +45,30 @@ def normalize_store_game_data(game_data, metadata=None):
     }
 
 
+def deduplicate_store_games(games):
+    deduplicated = []
+    seen_app_ids = set()
+    for game_data in games or []:
+        app_id = str(game_data.get("id", "") or "").strip()
+        if app_id:
+            if app_id in seen_app_ids:
+                continue
+            seen_app_ids.add(app_id)
+        deduplicated.append(game_data)
+    return deduplicated
+
+
+def prepare_store_game_data(game_data, metadata=None, require_appdetails=False, hide_hardware=False):
+    if require_appdetails and not metadata:
+        return None
+
+    normalized = normalize_store_game_data(game_data, metadata)
+    store_type = str(normalized.get("store_type", "") or "").strip().lower()
+    if hide_hardware and store_type == "hardware":
+        return None
+    return normalized
+
+
 def format_release_date_text(release_date_text):
     release_date_text = str(release_date_text or "").strip()
     if not release_date_text:
@@ -133,6 +157,9 @@ def supports_live_metrics(game_data, excluded_name_patterns):
     if game_data.get("type") != "app":
         return False
 
+    if game_data.get("coming_soon"):
+        return False
+
     name = str(game_data.get("name", "")).strip().lower()
     if not name:
         return False
@@ -193,6 +220,7 @@ def build_store_result_subtitle(
     achievement_progress_text="",
     price_text="",
     release_date_text="",
+    deck_compatibility_text="",
     labels=None,
 ):
     labels = labels or {}
@@ -203,6 +231,7 @@ def build_store_result_subtitle(
     )
     return (
         f"{subtitle_prefix}{platform_suffix}"
+        f"{' | ' + deck_compatibility_text if deck_compatibility_text else ''}"
         f"{review_score_text}{player_count_text}{owned_playtime_text}"
         f"{achievement_progress_text}{price_text}{release_date_text}"
     )
@@ -257,6 +286,7 @@ def build_store_game_result_spec(
     include_review_score=False,
     include_player_count=False,
     include_achievements=False,
+    deck_compatibility_text="",
     labels=None,
 ):
     labels = labels or {}
@@ -281,6 +311,7 @@ def build_store_game_result_spec(
                 if include_achievements
                 else ""
             ),
+            deck_compatibility_text=deck_compatibility_text,
             price_text=format_store_price_or_availability(
                 game_data,
                 country_code,

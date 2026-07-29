@@ -27,6 +27,7 @@ class UICommandsHarness(SteamPluginUICommandsMixin):
     INVISIBLE_ICON = "invisible-icon"
     WARNING_ICON = "warning-icon"
     FEATURE_HEALTH_RESET_ICON = "feature-health-reset-icon"
+    FRIENDS_ICON = "friends-icon"
 
     def __init__(self):
         self.messages = []
@@ -173,7 +174,7 @@ class UICommandsTests(unittest.TestCase):
 
         self.assertEqual(
             [result["Title"] for result in results],
-            ["st api", "st switch", "st status", "st wishlist", "st top", "st deals"],
+            ["st api", "st switch", "st status", "st wishlist", "st friends", "st top", "st deals"],
         )
         self.assertEqual(
             [result["IcoPath"] for result in results],
@@ -182,6 +183,7 @@ class UICommandsTests(unittest.TestCase):
                 "community-icon",
                 "online-icon",
                 "wishlist-icon",
+                "friends-icon",
                 "top-sellers-icon",
                 "deals-icon",
             ],
@@ -268,7 +270,7 @@ class UICommandsTests(unittest.TestCase):
         self.assertEqual(results[-1]["IcoPath"], "feature-health-reset-icon")
         self.assertEqual(
             results[-1]["SubTitle"],
-            "Download control, Steam cart, Steam wishlist, Token cache are enabled | Press to reset",
+            "Download control, Steam cart, Steam wishlist, Friend favorites, Friend game joining, Token cache are enabled | Press to reset",
         )
 
     def test_save_owned_api_key_shows_success_message(self):

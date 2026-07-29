@@ -36,6 +36,7 @@ class SteamPluginCoreMixin:
     )
     REQUIRED_PLUGIN_PROVIDERS = (
         "account",
+        "friends",
         "owned_api",
         "runtime",
         "wishlist",
@@ -145,6 +146,7 @@ class SteamPluginCoreMixin:
         refund_state=None,
         playtime_minutes=None,
         has_current_account_local_data=None,
+        friends_playing_count=None,
         coming_soon=None,
         result_source=None,
         store_type=None,
@@ -169,6 +171,11 @@ class SteamPluginCoreMixin:
             data["playtime_minutes"] = int(playtime_minutes)
         if has_current_account_local_data is not None:
             data["has_current_account_local_data"] = bool(has_current_account_local_data)
+        if friends_playing_count is not None:
+            data["friends_playing_count"] = max(
+                0,
+                int(friends_playing_count),
+            )
         if coming_soon is not None:
             data["coming_soon"] = bool(coming_soon)
         if result_source:
@@ -255,6 +262,9 @@ class SteamPluginCoreMixin:
 
     def should_show_csrin_context_menu(self):
         return self.get_setting_bool("show_csrin_context_menu", True)
+
+    def should_show_smokeapi_context_menu(self):
+        return self.get_setting_bool("enable_smokeapi_context_menu", False)
 
     def normalize_steam_web_api_key(self, value):
         normalized = str(value or "").strip()
@@ -376,6 +386,7 @@ class SteamPluginCoreMixin:
             self.owned_api_key_loaded = True
         self.clear_owned_games_cache()
         self.core_providers.wishlist.clear_cache()
+        self.core_providers.friends.clear_cache()
 
     def is_owned_api_key_bound_to_active_user(self):
         active_steamid64 = self.core_providers.account.active_steamid64()

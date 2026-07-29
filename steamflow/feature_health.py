@@ -9,11 +9,15 @@ FEATURE_STEAM_SESSION_TOKEN = "steam_session_token"
 FEATURE_DOWNLOAD_CONTROL = "download_control"
 FEATURE_STEAM_CART = "steam_cart"
 FEATURE_STEAM_WISHLIST = "steam_wishlist"
+FEATURE_STEAM_FAVORITES = "steam_favorites"
+FEATURE_STEAM_FRIEND_JOIN = "steam_friend_join"
 FEATURE_NAMES = (
     FEATURE_STEAM_SESSION_TOKEN,
     FEATURE_DOWNLOAD_CONTROL,
     FEATURE_STEAM_CART,
     FEATURE_STEAM_WISHLIST,
+    FEATURE_STEAM_FAVORITES,
+    FEATURE_STEAM_FRIEND_JOIN,
 )
 # debug switch to force all fragile features off in the ui (default: False)
 DEBUG_DISABLE_ALL_FRAGILE_FEATURES = False
@@ -243,8 +247,16 @@ def classify_feature_error(error, feature_name=None):
         if feature_name == FEATURE_STEAM_WISHLIST:
             return "wishlist_rejected"
         return "auth_rejected"
-    if "clientcomm" in message or "iclientcommservice" in message or "http 401" in message or "http 403" in message:
+    if "clientcomm" in message or "iclientcommservice" in message:
         return "clientcomm_rejected"
+    if "http 401" in message or "http 403" in message:
+        if feature_name == FEATURE_DOWNLOAD_CONTROL:
+            return "clientcomm_rejected"
+        if feature_name == FEATURE_STEAM_CART:
+            return "cart_rejected"
+        if feature_name == FEATURE_STEAM_WISHLIST:
+            return "wishlist_rejected"
+        return "auth_rejected"
     if "cart" in message or "shopping cart" in message or "package" in message:
         return "cart_rejected"
     if "wishlist" in message or "iwishlistservice" in message:

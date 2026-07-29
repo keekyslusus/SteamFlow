@@ -53,7 +53,7 @@ jobs:
           Remove-Item $staging -Recurse -Force
         }
         New-Item -ItemType Directory -Path $staging | Out-Null
-        Get-ChildItem -Force | Where-Object { $_.Name -notin '.git', '.github', '.release' } | ForEach-Object {
+        Get-ChildItem -Force | Where-Object { $_.Name -notin '.git', '.github', '.release', 'tests' } | ForEach-Object {
           Copy-Item -LiteralPath $_.FullName -Destination $staging -Recurse -Force
         }
         $zipPath = Join-Path $PWD 'Flow.Launcher.Plugin.SteamFlow.zip'

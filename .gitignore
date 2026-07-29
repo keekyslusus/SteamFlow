@@ -10,6 +10,8 @@
 steam_switch_worker.log
 steam_wishlist_worker.log
 cache_download_progress.json
+/cache_smoke_safety.json
+/cache_smoke_state.json
 /cache_app_details/
 
 /tools
@@ -17,3 +19,5 @@ cache_download_progress.json
 *.log
 wishlist.json
 1.txt
+*.lnk
+

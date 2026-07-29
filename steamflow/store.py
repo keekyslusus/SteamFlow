@@ -14,6 +14,7 @@ from .store_collections import (
     normalize_store_collection_name,
 )
 from .store_search import fetch_store_search_games
+from .steam_deck_service import apply_deck_compatibility_categories
 
 
 class SteamPluginStoreMixin:
@@ -37,6 +38,7 @@ class SteamPluginStoreMixin:
         "account",
         "runtime",
         "settings",
+        "steam_deck",
     )
 
     @property
@@ -206,6 +208,10 @@ class SteamPluginStoreMixin:
                 max_results=self.CONFIG.query.max_results,
                 timeout=0.7,
             )
+            deck_categories = providers.steam_deck.compatibility_categories(
+                [game.get("id") for game in games]
+            )
+            games = apply_deck_compatibility_categories(games, deck_categories)
 
             with self.state_lock:
                 self.search_cache[cache_key] = build_timestamped_cache_entry({"games": games})

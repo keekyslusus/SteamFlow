@@ -4,6 +4,7 @@ import threading
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LIB_PATH = PROJECT_ROOT / "lib"
@@ -24,6 +25,7 @@ from steamflow.constants import STEAMFLOW_CONFIG
 
 class WishlistHarness(SteamPluginWishlistMixin, SteamPluginStorageMixin, SteamPluginUICommandsMixin):
     OWNED_ICON = "owned-icon"
+    WISHLIST_ICON = "wishlist-icon"
     WISHLIST_CACHE_TTL_SECONDS = 15 * 60
     WISHLIST_COLD_DETAIL_FETCH_LIMIT = 8
     MAX_WISHLIST_RESULTS = 15
@@ -52,6 +54,7 @@ class WishlistHarness(SteamPluginWishlistMixin, SteamPluginStorageMixin, SteamPl
             "steam_session_token": True,
             "steam_wishlist": True,
         }
+        self.messages = []
 
     def _read_json_file(self, path, error_message):
         with open(path, "r", encoding="utf-8") as file_obj:
@@ -146,6 +149,9 @@ class WishlistHarness(SteamPluginWishlistMixin, SteamPluginStorageMixin, SteamPl
 
     def log_exception(self, message):
         return None
+
+    def show_msg(self, title, subtitle, ico_path=""):
+        self.messages.append((title, subtitle, ico_path))
 
 
 class WishlistTests(unittest.TestCase):
@@ -368,6 +374,85 @@ class WishlistTests(unittest.TestCase):
 
             self.assertEqual(message, "Steam wishlist integration is temporarily unavailable")
             self.assertEqual(harness.started_mutation_workers, [])
+
+    def test_wishlist_success_toasts_update_cache_only_after_confirmed_worker_result(self):
+        cases = [
+            ("add", "20", "Portal 2", [], True, "Portal 2 was added to the Steam wishlist"),
+            (
+                "remove",
+                "10",
+                "Half-Life",
+                [{"appid": "10", "date_added": 100, "priority": 0}],
+                False,
+                "Half-Life was removed from the Steam wishlist",
+            ),
+        ]
+        for action, app_id, name, initial_items, expected_contains, expected_message in cases:
+            with self.subTest(action=action), TemporaryDirectory() as temp_dir:
+                harness = WishlistHarness(temp_dir)
+                harness.wishlist_cache_loaded = True
+                harness.wishlist_items = list(initial_items)
+                harness.wishlist_steamid64 = harness.active_steamid64
+
+                with patch(
+                    "steamflow.wishlist.start_worker_feedback_monitor",
+                    side_effect=lambda _plugin, _process, on_complete: on_complete(True) or object(),
+                ):
+                    harness.mutate_steam_wishlist(app_id, action, name=name)
+
+                self.assertEqual(harness.is_wishlisted_app(app_id), expected_contains)
+                self.assertEqual(
+                    harness.messages,
+                    [("Steam Wishlist", expected_message, "wishlist-icon")],
+                )
+                self.assertEqual(harness.scheduled_refreshes, [])
+
+    def test_wishlist_failure_toast_does_not_change_cache(self):
+        with TemporaryDirectory() as temp_dir:
+            harness = WishlistHarness(temp_dir)
+            harness.wishlist_cache_loaded = True
+            harness.wishlist_items = []
+            harness.wishlist_steamid64 = harness.active_steamid64
+
+            with patch(
+                "steamflow.wishlist.start_worker_feedback_monitor",
+                side_effect=lambda _plugin, _process, on_complete: on_complete(False) or object(),
+            ):
+                harness.add_to_steam_wishlist("20", name="Portal 2")
+
+            self.assertFalse(harness.is_wishlisted_app("20"))
+            self.assertEqual(
+                harness.messages,
+                [
+                    (
+                        "Steam Wishlist",
+                        "The Steam wishlist was not changed for Portal 2",
+                        "wishlist-icon",
+                    )
+                ],
+            )
+            self.assertEqual(harness.scheduled_refreshes, [])
+
+    def test_confirmed_wishlist_result_updates_requested_account_cache(self):
+        with TemporaryDirectory() as temp_dir:
+            harness = WishlistHarness(temp_dir)
+            harness.wishlist_cache_loaded = True
+            harness.wishlist_items = []
+            harness.wishlist_steamid64 = harness.active_steamid64
+
+            def complete_after_account_change(plugin, _process, on_complete):
+                plugin.active_steamid64 = "76561198000000099"
+                on_complete(True)
+                return object()
+
+            with patch(
+                "steamflow.wishlist.start_worker_feedback_monitor",
+                side_effect=complete_after_account_change,
+            ):
+                harness.add_to_steam_wishlist("20", "76561198000000000")
+
+            self.assertEqual(harness.wishlist_steamid64, "76561198000000000")
+            self.assertEqual(harness.wishlist_items[0]["appid"], "20")
 
 
 if __name__ == "__main__":

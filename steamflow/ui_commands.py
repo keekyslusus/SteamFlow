@@ -12,6 +12,7 @@ class SteamPluginUICommandsMixin:
     CONFIG = STEAMFLOW_CONFIG
     REQUIRED_PLUGIN_ATTRS = (
         "DEALS_ICON",
+        "FRIENDS_ICON",
         "TOP_SELLERS_ICON",
     )
     REQUIRED_PLUGIN_PROVIDERS = (
@@ -20,6 +21,7 @@ class SteamPluginUICommandsMixin:
         "owned_api",
         "results",
         "runtime",
+        "steam_deck",
         "wishlist",
     )
 
@@ -27,6 +29,7 @@ class SteamPluginUICommandsMixin:
     SWITCH_ACCOUNT_QUERY_ALIASES = {"switch", "switch account", "switch accounts", "account switch", "accounts"}
     STATUS_QUERY_ALIASES = {"status", "statuses"}
     WISHLIST_QUERY_ALIASES = {"wishlist", "wish list"}
+    FRIENDS_QUERY_ALIASES = {"friend", "friends"}
     STORE_COLLECTION_QUERY_ALIASES = {
         "top": "top_sellers",
         "seller": "top_sellers",
@@ -48,6 +51,8 @@ class SteamPluginUICommandsMixin:
         ("download_control", "api.feature_health.label.download_control"),
         ("steam_cart", "api.feature_health.label.steam_cart"),
         ("steam_wishlist", "api.feature_health.label.steam_wishlist"),
+        ("steam_favorites", "api.feature_health.label.steam_favorites"),
+        ("steam_friend_join", "api.feature_health.label.steam_friend_join"),
         ("steam_session_token", "api.feature_health.label.token_cache"),
     )
     STATUS_CURRENT_RESULT_SCORE = 1_000_000
@@ -79,6 +84,9 @@ class SteamPluginUICommandsMixin:
     def is_wishlist_query(self, search_term):
         return self.get_wishlist_query_text(search_term) is not None
 
+    def is_friends_query(self, search_term):
+        return self.get_friends_query_text(search_term) is not None
+
     def get_store_collection_query(self, search_term):
         normalized = str(search_term or "").strip().lower()
         return self.STORE_COLLECTION_QUERY_ALIASES.get(normalized)
@@ -94,6 +102,17 @@ class SteamPluginUICommandsMixin:
         if first_token.startswith("wishl"):
             return raw_value.split(" ", 1)[1].strip() if " " in raw_value else ""
         for alias in sorted(self.WISHLIST_QUERY_ALIASES, key=len, reverse=True):
+            if normalized == alias:
+                return ""
+            prefix = f"{alias} "
+            if normalized.startswith(prefix):
+                return raw_value[len(alias) :].strip()
+        return None
+
+    def get_friends_query_text(self, search_term):
+        raw_value = str(search_term or "").strip()
+        normalized = raw_value.lower()
+        for alias in sorted(self.FRIENDS_QUERY_ALIASES, key=len, reverse=True):
             if normalized == alias:
                 return ""
             prefix = f"{alias} "
@@ -142,6 +161,7 @@ class SteamPluginUICommandsMixin:
         switch_query = result_provider.build_plugin_query("switch")
         status_query = result_provider.build_plugin_query("status")
         wishlist_query = result_provider.build_plugin_query("wishlist")
+        friends_query = result_provider.build_plugin_query("friends")
         top_query = result_provider.build_plugin_query("top")
         deals_query = result_provider.build_plugin_query("deals")
 
@@ -154,6 +174,23 @@ class SteamPluginUICommandsMixin:
             wishlist_subtitle += f" | {plugin_tr(self, 'command.wishlist.unavailable_bound')}"
         elif wishlist_error == reasons.no_active_account:
             wishlist_subtitle += f" | {plugin_tr(self, 'command.wishlist.unavailable_no_account')}"
+
+        account_provider = self.ui_command_providers.account
+        if not account_provider.has_owned_api_key():
+            friends_error = reasons.api_not_configured
+        elif not account_provider.api_key_bound_to_active_user():
+            friends_error = reasons.api_bound_to_another_account
+        elif not account_provider.active_steamid64():
+            friends_error = reasons.no_active_account
+        else:
+            friends_error = None
+        friends_subtitle = plugin_tr(self, "command.friends.subtitle")
+        if friends_error == reasons.api_not_configured:
+            friends_subtitle += f" | {plugin_tr(self, 'command.friends.unavailable_api')}"
+        elif friends_error == reasons.api_bound_to_another_account:
+            friends_subtitle += f" | {plugin_tr(self, 'command.friends.unavailable_bound')}"
+        elif friends_error == reasons.no_active_account:
+            friends_subtitle += f" | {plugin_tr(self, 'command.friends.unavailable_no_account')}"
 
         return [
             result_provider.build_result(
@@ -185,18 +222,25 @@ class SteamPluginUICommandsMixin:
                 Score=21997,
             ),
             result_provider.build_result(
+                title=friends_query,
+                subtitle=friends_subtitle,
+                icon_path=self.FRIENDS_ICON,
+                action=result_provider.build_change_query_action(friends_query),
+                Score=21996,
+            ),
+            result_provider.build_result(
                 title=top_query,
                 subtitle=plugin_tr(self, "command.top_sellers.subtitle"),
                 icon_path=self.TOP_SELLERS_ICON,
                 action=result_provider.build_change_query_action(top_query),
-                Score=21996,
+                Score=21995,
             ),
             result_provider.build_result(
                 title=deals_query,
                 subtitle=plugin_tr(self, "command.specials.subtitle"),
                 icon_path=self.DEALS_ICON,
                 action=result_provider.build_change_query_action(deals_query),
-                Score=21995,
+                Score=21994,
             ),
         ]
 
@@ -426,6 +470,7 @@ class SteamPluginUICommandsMixin:
             self.owned_game_playtimes = dict(owned_game_playtimes)
             self.owned_games_cache_loaded = True
         providers.owned_api.save_owned_games_cache()
+        providers.steam_deck.schedule_history_refresh(force=True)
         message = plugin_tr(
             self,
             "api.key_saved_bound",

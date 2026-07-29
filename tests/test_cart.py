@@ -32,6 +32,7 @@ class CartHarness(SteamPluginCartMixin):
         self.active_steamid64 = "76561198000000000"
         self.logged_exceptions = []
         self.enabled_features = {}
+        self.metadata_by_app_id = {}
 
     def get_active_steam_user_steamid64(self):
         return self.active_steamid64
@@ -41,6 +42,23 @@ class CartHarness(SteamPluginCartMixin):
 
     def feature_enabled(self, name):
         return self.enabled_features.get(str(name), True)
+
+    def get_app_details_metadata(self, app_id, allow_network_on_miss=True):
+        return self.metadata_by_app_id.get(str(app_id))
+
+
+class CartFeedbackHarness(CartHarness):
+    BUY_ICON = "buy-icon"
+
+    def __init__(self, secure_settings_dir):
+        super().__init__(secure_settings_dir)
+        self.messages = []
+
+    def start_steam_cart_worker(self, steamid64, app_id):
+        return object()
+
+    def show_msg(self, title, subtitle, ico_path=""):
+        self.messages.append((title, subtitle, ico_path))
 
 
 class CartProtobufTests(unittest.TestCase):
@@ -142,6 +160,63 @@ class CartActionTests(unittest.TestCase):
 
         self.assertEqual(result, "Steam cart integration is temporarily unavailable")
         mocked_popen.assert_not_called()
+
+    def test_add_to_steam_cart_shows_success_toast_after_worker_completes(self):
+        with TemporaryDirectory() as temp_dir:
+            harness = CartFeedbackHarness(temp_dir)
+
+            with patch(
+                "steamflow.cart.start_worker_feedback_monitor",
+                side_effect=lambda _plugin, _process, on_complete: on_complete(True) or object(),
+            ):
+                harness.add_to_steam_cart(
+                    "1462040",
+                    name="FINAL FANTASY VII REMAKE INTERGRADE",
+                )
+
+        self.assertEqual(
+            harness.messages,
+            [
+                (
+                    "Steam Cart",
+                    "FINAL FANTASY VII REMAKE INTERGRADE was added to the Steam cart",
+                    "buy-icon",
+                )
+            ],
+        )
+
+    def test_add_to_steam_cart_resolves_name_from_cached_metadata(self):
+        with TemporaryDirectory() as temp_dir:
+            harness = CartFeedbackHarness(temp_dir)
+            harness.metadata_by_app_id["1462040"] = {
+                "name": "FINAL FANTASY VII REMAKE INTERGRADE"
+            }
+
+            with patch(
+                "steamflow.cart.start_worker_feedback_monitor",
+                side_effect=lambda _plugin, _process, on_complete: on_complete(True) or object(),
+            ):
+                harness.add_to_steam_cart("1462040")
+
+        self.assertEqual(
+            harness.messages[0][1],
+            "FINAL FANTASY VII REMAKE INTERGRADE was added to the Steam cart",
+        )
+
+    def test_add_to_steam_cart_shows_failure_toast_after_worker_fails(self):
+        with TemporaryDirectory() as temp_dir:
+            harness = CartFeedbackHarness(temp_dir)
+
+            with patch(
+                "steamflow.cart.start_worker_feedback_monitor",
+                side_effect=lambda _plugin, _process, on_complete: on_complete(False) or object(),
+            ):
+                harness.add_to_steam_cart("1462040", name="Test Game")
+
+        self.assertEqual(
+            harness.messages,
+            [("Steam Cart", "Test Game was not added to the Steam cart", "buy-icon")],
+        )
 
 
 if __name__ == "__main__":

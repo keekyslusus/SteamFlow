@@ -101,6 +101,22 @@ def format_relative_minutes_ago(total_minutes, tr=None):
     return _tr(tr, "relative.days_short_ago", "{count}d ago", count=total_days)
 
 
+def format_last_seen(unix_timestamp, now=None, tr=None):
+    try:
+        timestamp = int(unix_timestamp)
+        if timestamp <= 0:
+            return ""
+        seen_at = datetime.fromtimestamp(timestamp)
+    except (OverflowError, TypeError, ValueError, OSError):
+        return ""
+
+    now = now or datetime.now()
+    age_minutes = max(0, int((now - seen_at).total_seconds() // 60))
+    if age_minutes < 7 * 24 * 60:
+        return format_relative_minutes_ago(age_minutes, tr=tr)
+    return _format_absolute_date(seen_at, now, tr=tr)
+
+
 def format_wishlisted_date(unix_timestamp, now=None, tr=None):
     try:
         wishlisted_at = datetime.fromtimestamp(int(unix_timestamp))

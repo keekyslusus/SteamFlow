@@ -5,7 +5,7 @@
     <img alt="SteamFlow" src=".github/readme_for_light_theme.svg">
   </picture>
 </div>
-
+<!--
 <p align="center">
 <img src="https://hatscripts.github.io/circle-flags/flags/uk.svg" width="24"/>
 <img src="https://hatscripts.github.io/circle-flags/flags/de.svg" width="24"/>
@@ -19,7 +19,7 @@
 <img src="https://hatscripts.github.io/circle-flags/flags/cn.svg" width="24"/>
 <img src="https://hatscripts.github.io/circle-flags/flags/tw.svg" width="24"/>
 </p>
-
+-->
 <p align="center">
   <img src="https://img.shields.io/github/downloads/keekyslusus/SteamFlow/total?style=flat-square&color=black&labelColor=blue">
   <img src="https://img.shields.io/github/stars/keekyslusus/SteamFlow?style=flat-square&color=black&labelColor=blue">
@@ -41,6 +41,7 @@
 `steam deals`
 `steam status`
 `steam switch`
+`steam friends`
 `steam wishlist`
 
 ## Features
@@ -59,6 +60,8 @@
 
 - Search the Steam store by game name
 - Shows review score, concurrent player count, price, and release date
+- Shows which friends are currently playing a game
+- Shows Steam Deck compatibility for active Deck users
 - Browse Steam top sellers (`steam top`) and specials (`steam deals`)
 - Owned games opens directly in your library
 
@@ -68,6 +71,15 @@
 
 - Browse and search your Steam wishlist
 - Shows current price, review score, and date added to wishlist
+- Requires a Steam Web API key (`steam api` to configure)
+
+
+### Friends
+<img src=".github/friends.png" width="500">
+
+- Browse and search friends (`steam friends`)
+- Pins Steam favorite friends to the top of the list
+- Context menu: open chat, profile, trade offer, game page, or join their game when available
 - Requires a Steam Web API key (`steam api` to configure)
 
 
@@ -82,6 +94,8 @@
 - Check refund eligibility
 - Add games to Steam shopping cart
 - Add/remove games from Steam wishlist
+- Join a friend currently playing the game
+- [SmokeAPI](https://github.com/acidicoala/SmokeAPI)(experimental, off by default, may break games)
 - Install/Uninstall game
 
 
@@ -103,9 +117,14 @@
 
 - Detects owned games from store search
 - Enables wishlist browsing
+- Enables friend list, favorites and join-game actions
 - Shows your active profile status
 
 
 ## Installation
 
-type `pm install SteamFlow by keekys`in FlowLauncher
+type `pm install SteamFlow by keekys` in Flow Launcher
+
+## Use Google Keep?
+
+Try my plugin [GoogleKeepFlow](https://github.com/keekyslusus/GoogleKeepFlow)

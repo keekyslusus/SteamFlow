@@ -46,6 +46,13 @@ class StoreMetricsHarness(SteamPluginStoreMetricsMixin):
     def get_platform_suffix(self, platforms):
         return ""
 
+    def get_steam_deck_compatibility_label(self, category):
+        return {
+            1: "Unsupported on Steam Deck",
+            2: "Playable on Steam Deck",
+            3: "Verified on Steam Deck",
+        }.get(category, "")
+
     def build_context_data(self, **kwargs):
         return kwargs
 
@@ -93,6 +100,27 @@ class StoreMetricsHarness(SteamPluginStoreMetricsMixin):
 
 
 class StoreMetricsTests(unittest.TestCase):
+    def test_process_game_data_appends_deck_compatibility_label(self):
+        harness = StoreMetricsHarness()
+
+        result = harness.process_game_data(
+            {
+                "type": "app",
+                "id": "570",
+                "name": "Dota 2",
+                "platforms": {},
+                "tiny_image": None,
+                "has_price": False,
+                "price": None,
+                "is_free": True,
+                "steam_deck_compat_category": 2,
+            },
+            allow_cold_metric_fetch=False,
+            allow_cold_appdetails_fetch=False,
+        )
+
+        self.assertIn(" | Playable on Steam Deck", result["SubTitle"])
+
     def test_only_true_free_games_render_free_badge(self):
         harness = StoreMetricsHarness()
 
@@ -422,6 +450,85 @@ class StoreMetricsTests(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(harness.scheduled_wishlist_refreshes, [False])
+
+    def test_process_store_results_applies_metric_limit_after_filtering(self):
+        harness = StoreMetricsHarness()
+        harness.should_show_player_count = lambda: True
+        harness.app_details_by_id.update(
+            {
+                "100": {
+                    "type": "hardware",
+                    "name": "Steam Machine",
+                },
+                "300": {
+                    "type": "game",
+                    "name": "Upcoming Game",
+                    "coming_soon": True,
+                },
+                "400": {
+                    "type": "game",
+                    "name": "Released One",
+                    "coming_soon": False,
+                },
+                "500": {
+                    "type": "game",
+                    "name": "Released Two",
+                    "coming_soon": False,
+                },
+                "600": {
+                    "type": "game",
+                    "name": "Released Three",
+                    "coming_soon": False,
+                },
+            }
+        )
+
+        def game(app_id, name):
+            return {
+                "type": "app",
+                "id": app_id,
+                "name": name,
+                "platforms": {},
+                "tiny_image": None,
+                "has_price": False,
+                "price": None,
+                "is_free": False,
+            }
+
+        results = harness.process_store_results(
+            [
+                game("100", "Steam Machine"),
+                game("100", "Steam Machine duplicate"),
+                game("200", "Missing appdetails"),
+                game("300", "Upcoming Game"),
+                game("400", "Released One"),
+                game("500", "Released Two"),
+                game("600", "Released Three"),
+            ],
+            allow_cold_metric_fetch=True,
+            allow_cold_appdetails_fetch=True,
+            cold_metric_fetch_limit=2,
+            require_appdetails=True,
+            hide_hardware=True,
+        )
+
+        self.assertEqual(
+            [result["AppID"] for result in results],
+            ["300", "400", "500", "600"],
+        )
+        self.assertEqual(
+            sum(app_id == "100" for app_id, _allow_network, _timeout in harness.appdetails_calls),
+            1,
+        )
+        self.assertNotIn("300", {app_id for app_id, _allow_network in harness.player_calls})
+        self.assertEqual(
+            dict(harness.player_calls),
+            {
+                "400": True,
+                "500": True,
+                "600": False,
+            },
+        )
 
     def test_process_game_data_marks_wishlist_actions_unavailable_without_api_key(self):
         harness = StoreMetricsHarness()

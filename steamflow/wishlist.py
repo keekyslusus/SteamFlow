@@ -3,21 +3,21 @@ import time
 from . import util_steam_date
 from .cache_utils import is_timestamp_fresh
 from .constants import STEAMFLOW_CONFIG
-from .hooks import get_secure_settings_dir
+from .hooks import get_secure_settings_dir, show_message_if_supported
 from .providers import get_plugin_providers
 from .localization import plugin_tr
 from .tasks import get_background_task_manager
 from .wishlist_mutation_service import start_steam_wishlist_mutation_worker_process
+from .worker_feedback import start_worker_feedback_monitor
 from .wishlist_service import (
-    add_wishlist_cache_item,
     fetch_wishlist_items,
     fetch_wishlist_result,
     get_wishlist_fetch_error_message,
     is_wishlist_cache_fresh,
     is_wishlist_worker_running,
     build_wishlist_results_plan,
+    mutate_wishlist_cache_file,
     normalize_wishlist_items,
-    remove_wishlist_cache_item,
     select_wishlist_prewarm_items,
     sort_wishlist_items,
     start_wishlist_hydration_worker_process,
@@ -93,30 +93,36 @@ class SteamPluginWishlistMixin:
             self.wishlist_cache_loaded = True
         self.wishlist_providers.wishlist.save_cache()
 
-    def update_wishlist_cache_for_mutation(self, app_id, action):
-        account_provider = self.wishlist_providers.account
-        steamid64 = account_provider.active_steamid64()
+    def update_wishlist_cache_for_mutation(self, app_id, action, steamid64=None):
+        if not steamid64:
+            steamid64 = self.wishlist_providers.account.active_steamid64()
         if not steamid64:
             return
 
         self.ensure_wishlist_cache_loaded()
         with self.state_lock:
-            if self.wishlist_steamid64 and str(self.wishlist_steamid64) != str(steamid64):
-                self.wishlist_items = []
-            if str(action or "").strip().lower() == "add":
-                self.wishlist_items = add_wishlist_cache_item(self.wishlist_items, app_id)
-            elif str(action or "").strip().lower() == "remove":
-                self.wishlist_items = remove_wishlist_cache_item(self.wishlist_items, app_id)
-            else:
-                return
-            self.wishlist_steamid64 = steamid64
-            self.wishlist_last_sync = time.time()
-            self.wishlist_last_attempt = self.wishlist_last_sync
+            fallback_items = (
+                list(self.wishlist_items)
+                if not self.wishlist_steamid64
+                or str(self.wishlist_steamid64) == str(steamid64)
+                else []
+            )
+        updated_cache = mutate_wishlist_cache_file(
+            self.wishlist_cache_file,
+            steamid64,
+            app_id,
+            action,
+            fallback_items=fallback_items,
+        )
+        with self.state_lock:
+            self.wishlist_items = updated_cache["items"]
+            self.wishlist_steamid64 = updated_cache["steamid64"]
+            self.wishlist_last_sync = updated_cache["last_sync"]
+            self.wishlist_last_attempt = updated_cache["last_attempt"]
             self.wishlist_cache_loaded = True
-        self.wishlist_providers.wishlist.save_cache()
 
     def start_steam_wishlist_mutation_worker(self, steamid64, app_id, action):
-        start_steam_wishlist_mutation_worker_process(
+        return start_steam_wishlist_mutation_worker_process(
             self.plugin_dir,
             get_secure_settings_dir(self),
             steamid64,
@@ -124,7 +130,38 @@ class SteamPluginWishlistMixin:
             action,
         )
 
-    def mutate_steam_wishlist(self, app_id, action, steamid64=None):
+    def _resolve_wishlist_game_name(self, app_id, name=None):
+        name = str(name or "").strip()
+        if name:
+            return name
+        metadata = self.wishlist_providers.store.app_details_metadata(
+            app_id,
+            allow_network_on_miss=False,
+        )
+        if metadata:
+            name = str(metadata.get("name") or "").strip()
+        if name:
+            return name
+        return plugin_tr(self, "wishlist.game_fallback", app_id=app_id)
+
+    def _complete_wishlist_mutation(self, steamid64, app_id, action, name, succeeded):
+        if succeeded:
+            self.update_wishlist_cache_for_mutation(app_id, action, steamid64=steamid64)
+            message_key = (
+                "wishlist.add_succeeded"
+                if action == "add"
+                else "wishlist.remove_succeeded"
+            )
+        else:
+            message_key = "wishlist.mutation_failed_result"
+        show_message_if_supported(
+            self,
+            plugin_tr(self, "wishlist.feedback_title"),
+            plugin_tr(self, message_key, name=name),
+            getattr(self, "WISHLIST_ICON", ""),
+        )
+
+    def mutate_steam_wishlist(self, app_id, action, steamid64=None, name=None):
         app_id = str(app_id or "").strip()
         action = str(action or "").strip().lower()
         if not app_id:
@@ -146,21 +183,41 @@ class SteamPluginWishlistMixin:
             return plugin_tr(self, "wishlist.already_added")
 
         try:
-            self.start_steam_wishlist_mutation_worker(steamid64, app_id, action)
-            self.update_wishlist_cache_for_mutation(app_id, action)
-            self.schedule_wishlist_refresh(force=True)
+            name = self._resolve_wishlist_game_name(app_id, name=name)
+            worker_process = self.start_steam_wishlist_mutation_worker(steamid64, app_id, action)
+            feedback_monitor = start_worker_feedback_monitor(
+                self,
+                worker_process,
+                lambda succeeded: self._complete_wishlist_mutation(
+                    steamid64,
+                    app_id,
+                    action,
+                    name,
+                    succeeded,
+                ),
+            )
+            if feedback_monitor is None:
+                self.update_wishlist_cache_for_mutation(app_id, action, steamid64=steamid64)
+                self.schedule_wishlist_refresh(force=True)
             if action == "add":
                 return plugin_tr(self, "wishlist.adding", app_id=app_id)
             return plugin_tr(self, "wishlist.removing", app_id=app_id)
         except Exception as error:
             self.log_exception(f"Failed to start Steam wishlist worker for app {app_id}")
-            return plugin_tr(self, "wishlist.mutation_failed", error=str(error))
+            message = plugin_tr(self, "wishlist.mutation_failed", error=str(error))
+            show_message_if_supported(
+                self,
+                plugin_tr(self, "wishlist.feedback_title"),
+                message,
+                getattr(self, "WISHLIST_ICON", ""),
+            )
+            return message
 
-    def add_to_steam_wishlist(self, app_id, steamid64=None):
-        return self.mutate_steam_wishlist(app_id, "add", steamid64=steamid64)
+    def add_to_steam_wishlist(self, app_id, steamid64=None, name=None):
+        return self.mutate_steam_wishlist(app_id, "add", steamid64=steamid64, name=name)
 
-    def remove_from_steam_wishlist(self, app_id, steamid64=None):
-        return self.mutate_steam_wishlist(app_id, "remove", steamid64=steamid64)
+    def remove_from_steam_wishlist(self, app_id, steamid64=None, name=None):
+        return self.mutate_steam_wishlist(app_id, "remove", steamid64=steamid64, name=name)
 
     def wishlist_cache_is_fresh(self, steamid64):
         self.ensure_wishlist_cache_loaded()

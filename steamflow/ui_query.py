@@ -11,6 +11,7 @@ class SteamPluginUIQueryMixin:
     CONFIG = STEAMFLOW_CONFIG
     REQUIRED_PLUGIN_PROVIDERS = (
         "commands",
+        "friends",
         "local",
         "metrics",
         "results",
@@ -46,12 +47,33 @@ class SteamPluginUIQueryMixin:
             games.sort(key=lambda item: item[1].lower())
         return games[: self.CONFIG.query.max_empty_query_results]
 
-    def process_local_results(self, local_matches, include_player_count=False):
+    def process_local_results(
+        self,
+        local_matches,
+        include_player_count=False,
+        include_friends_playing=False,
+    ):
         if not local_matches:
             return []
 
+        playing_by_app = (
+            self.ui_query_providers.friends.fresh_playing_by_app()
+            if include_friends_playing
+            else {}
+        )
         if not include_player_count:
-            return [self.build_local_result(app_id, name) for app_id, name in local_matches]
+            return [
+                self.build_local_result(
+                    app_id,
+                    name,
+                    friends_playing=(
+                        playing_by_app.get(str(app_id), ())
+                        if include_friends_playing
+                        else None
+                    ),
+                )
+                for app_id, name in local_matches
+            ]
 
         with ThreadPoolExecutor(max_workers=min(len(local_matches), self.CONFIG.query.max_results)) as executor:
             future_to_index = {}
@@ -76,6 +98,11 @@ class SteamPluginUIQueryMixin:
                 include_player_count=True,
                 player_count=player_counts[index],
                 player_count_loaded=True,
+                friends_playing=(
+                    playing_by_app.get(str(app_id), ())
+                    if include_friends_playing
+                    else None
+                ),
             )
             for index, (app_id, name) in enumerate(local_matches)
         ]
@@ -148,6 +175,13 @@ class SteamPluginUIQueryMixin:
                 providers.results.add_result(result)
             return
 
+        if providers.commands.is_friends_query(search_term):
+            providers.runtime.ensure_startup_initialized()
+            query_text = providers.commands.get_friends_query_text(search_term) or ""
+            for result in providers.commands.build_friends_results(query_text):
+                providers.results.add_result(result)
+            return
+
         if providers.commands.is_switch_account_query(search_term):
             providers.runtime.ensure_startup_initialized()
             for result in providers.commands.build_switch_account_results():
@@ -212,7 +246,13 @@ class SteamPluginUIQueryMixin:
             providers.runtime.mark_timing(timings, "collect_empty_local_games", stage_start_time)
 
             stage_start_time = time.perf_counter()
-            results.extend(self.process_local_results(games_to_show, include_player_count=False))
+            results.extend(
+                self.process_local_results(
+                    games_to_show,
+                    include_player_count=False,
+                    include_friends_playing=True,
+                )
+            )
             providers.runtime.mark_timing(timings, "process_empty_local_results", stage_start_time)
             if len(results) == 1:
                 results.append(self.build_empty_state_result())

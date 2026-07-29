@@ -43,6 +43,19 @@ class CoreStatusHarness(SteamPluginCoreMixin):
 
 
 class CoreStatusTests(unittest.TestCase):
+    def test_context_data_accepts_friends_playing_count(self):
+        harness = CoreStatusHarness()
+
+        context_data = harness.build_context_data(
+            app_id="570",
+            friends_playing_count=2,
+        )
+
+        self.assertEqual(
+            context_data,
+            {"app_id": "570", "friends_playing_count": 2},
+        )
+
     def test_platform_labels_are_hidden_by_default(self):
         harness = CoreStatusHarness()
 

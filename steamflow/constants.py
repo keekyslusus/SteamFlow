@@ -7,12 +7,14 @@ class SteamFlowIconConfig:
     default_icon: str = "icons/steam.png"
     browser_icon: str = "icons/browser.png"
     buy_icon: str = "icons/buy.png"
+    chat_icon: str = "icons/chat.png"
     clipboard_icon: str = "icons/clipboard.png"
     community_icon: str = "icons/community.png"
     csrin_icon: str = "icons/csrin.png"
     deals_icon: str = "icons/deals.png"
     download_icon: str = "icons/download.png"
     feature_health_reset_icon: str = "icons/feature_health_reset.png"
+    friends_icon: str = "icons/friends.png"
     discussions_icon: str = "icons/discussions.png"
     guides_icon: str = "icons/guides.png"
     location_icon: str = "icons/location.png"
@@ -24,8 +26,10 @@ class SteamFlowIconConfig:
     refund_icon: str = "icons/refund.png"
     screenshot_icon: str = "icons/screenshot.png"
     settings_icon: str = "icons/settings.png"
+    smokeapi_icon: str = "icons/smokeapi.png"
     steamdb_icon: str = "icons/steamdb.png"
     top_sellers_icon: str = "icons/top_sellers.png"
+    trade_icon: str = "icons/trade.png"
     trash_icon: str = "icons/trash.png"
     warning_icon: str = "icons/warning.png"
     wishlist_icon: str = "icons/wishlist.png"
@@ -37,8 +41,10 @@ class SteamFlowIconConfig:
 class SteamFlowQueryConfig:
     max_results: int = 5
     max_store_collection_results: int = 10
-    max_empty_query_results: int = 67
+    SIX_SEVEEEEEEN: int = 67
+    max_empty_query_results: int = SIX_SEVEEEEEEN
     max_wishlist_results: int = 15
+    max_friends_results: int = 15
     store_cold_metric_fetch_limit: int = 5
     wishlist_cold_detail_fetch_limit: int = 8
 
@@ -47,6 +53,16 @@ class SteamFlowQueryConfig:
 class SteamFlowCacheConfig:
     owned_games_retry_delay_seconds: int = 10 * 60
     owned_games_cache_ttl_seconds: int = 24 * 60 * 60
+    steam_deck_activity_window_seconds: int = 50 * 24 * 60 * 60
+    steam_deck_initial_check_intervals_seconds: tuple = (
+        24 * 60 * 60,
+        3 * 24 * 60 * 60,
+        7 * 24 * 60 * 60,
+    )
+    steam_deck_detected_check_interval_seconds: int = 14 * 24 * 60 * 60
+    steam_deck_failure_retry_seconds: int = 24 * 60 * 60
+    steam_deck_compatibility_ttl_seconds: int = 30 * 24 * 60 * 60
+    steam_deck_compatibility_failure_retry_seconds: int = 10 * 60
     search_ttl_seconds: int = 30
     store_specials_ttl_seconds: int = 20 * 60
     store_top_sellers_ttl_seconds: int = 45 * 60
@@ -63,6 +79,10 @@ class SteamFlowCacheConfig:
     cleanup_interval_seconds: int = 5 * 60
     metric_cache_save_interval_seconds: int = 10
     profile_summary_ttl_seconds: int = 30
+    friends_ttl_seconds: int = 10
+    friend_favorites_ttl_seconds: int = 60
+    friend_joinability_ttl_seconds: int = 5
+    friends_retry_delay_seconds: int = 60
 
 
 @dataclass(frozen=True)

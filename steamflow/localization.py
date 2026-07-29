@@ -7,7 +7,8 @@ from pathlib import Path
 
 
 DEFAULT_LOCALE = "en"
-SUPPORTED_LOCALES = frozenset({"en", "de", "es-ES", "fr", "ja", "ko", "pl", "pt-BR", "ru", "zh-Hans", "zh-Hant"})
+MULTI_LANGUAGE_ENABLED = False
+SUPPORTED_LOCALES = frozenset({DEFAULT_LOCALE})
 STEAM_LANGUAGE_BY_LOCALE = {
     "en": "english",
     "de": "german",
@@ -28,6 +29,11 @@ _ZH_HANT_REGIONS = {"tw", "hk", "mo"}
 
 
 def normalize_locale(value):
+    # Keep the multi-language normalization code below dormant for an easy
+    # re-enable when the backed-up locale files are restored.
+    if not MULTI_LANGUAGE_ENABLED:
+        return DEFAULT_LOCALE
+
     raw_value = str(value or "").strip().replace("_", "-")
     if not raw_value or raw_value.lower() == "auto":
         return DEFAULT_LOCALE
@@ -144,6 +150,9 @@ def detect_system_locale():
 
 
 def resolve_configured_locale(configured_locale):
+    if not MULTI_LANGUAGE_ENABLED:
+        return DEFAULT_LOCALE
+
     configured_locale = str(configured_locale or "auto").strip()
     if configured_locale.lower() in {"auto", "auto (system language)", "system"}:
         return detect_system_locale()

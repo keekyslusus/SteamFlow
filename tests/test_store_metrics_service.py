@@ -15,6 +15,7 @@ from steamflow.store_metrics_service import (
     build_review_score_url,
     build_store_result_subtitle,
     build_store_result_title,
+    deduplicate_store_games,
     fetch_current_players_with_http_get,
     fetch_player_achievement_progress_with_http_get,
     format_discount_percent,
@@ -22,6 +23,7 @@ from steamflow.store_metrics_service import (
     format_review_score,
     format_store_price_or_availability,
     normalize_store_game_data,
+    prepare_store_game_data,
     should_show_release_date_text,
     supports_live_metrics,
 )
@@ -60,6 +62,32 @@ class StoreMetricsServiceTests(unittest.TestCase):
         self.assertEqual(normalized["tiny_image"], "capsule.jpg")
         self.assertEqual(normalized["price"], {"final": 10})
         self.assertFalse(normalized["is_free"])
+
+    def test_store_result_preparation_deduplicates_and_filters_after_appdetails(self):
+        games = [
+            {"id": "4165910", "name": "Steam Machine"},
+            {"id": 4165910, "name": "Steam Machine duplicate"},
+            {"id": "570", "name": "Dota 2"},
+        ]
+
+        deduplicated = deduplicate_store_games(games)
+
+        self.assertEqual([str(game["id"]) for game in deduplicated], ["4165910", "570"])
+        self.assertIsNone(
+            prepare_store_game_data(
+                deduplicated[0],
+                {"type": "hardware", "name": "Steam Machine"},
+                require_appdetails=True,
+                hide_hardware=True,
+            )
+        )
+        self.assertIsNone(
+            prepare_store_game_data(
+                {"id": "999", "name": "Missing"},
+                metadata=None,
+                require_appdetails=True,
+            )
+        )
 
     def test_formatters_keep_store_subtitle_parts_consistent(self):
         self.assertEqual(format_discount_percent({"initial": 2000, "final": 1000}), " -50%")
@@ -112,6 +140,12 @@ class StoreMetricsServiceTests(unittest.TestCase):
         self.assertTrue(supports_live_metrics({"type": "app", "store_type": "game", "name": "Portal"}, excluded))
         self.assertFalse(supports_live_metrics({"type": "app", "store_type": "dlc", "name": "Portal DLC"}, excluded))
         self.assertFalse(supports_live_metrics({"type": "app", "store_type": "game", "name": "Portal Soundtrack"}, excluded))
+        self.assertFalse(
+            supports_live_metrics(
+                {"type": "app", "store_type": "game", "name": "Portal 3", "coming_soon": True},
+                excluded,
+            )
+        )
 
     def test_result_title_and_subtitle_are_built_from_metric_parts(self):
         self.assertEqual(build_store_result_title("Portal", is_owned=True), "\U0001F3AE Portal [Owned]")
@@ -125,6 +159,18 @@ class StoreMetricsServiceTests(unittest.TestCase):
                 price_text=" | Free",
             ),
             "Open in Steam store (Win) | 95% | \U0001F465 1,000 | Free",
+        )
+
+    def test_result_subtitle_includes_deck_compatibility_between_platform_and_metrics(self):
+        self.assertEqual(
+            build_store_result_subtitle(
+                {"platforms": {"windows": True}},
+                is_owned=False,
+                platform_suffix=" (Win)",
+                deck_compatibility_text="Playable on Steam Deck",
+                review_score_text=" | 95%",
+            ),
+            "Open in Steam store (Win) | Playable on Steam Deck | 95%",
         )
 
     def test_result_subtitle_hides_localized_coming_soon_release_date_duplicate(self):

@@ -16,6 +16,11 @@ LIGHTWEIGHT_METHODS = {
     "open_steam",
     "open_steam_discussions_page",
     "open_steam_friends",
+    "open_steam_friend_chat",
+    "open_steam_friend_profile",
+    "open_steam_friend_trade_offer",
+    "open_steam_friend_game",
+    "join_steam_friend_game",
     "open_steam_guides_page",
     "open_steam_library_game_details",
     "open_my_steam_wishlist",
@@ -27,6 +32,8 @@ LIGHTWEIGHT_METHODS = {
     "open_steam_screenshots_page",
     "open_steam_store_page",
     "open_steamdb_page",
+    "install_smokeapi",
+    "remove_smokeapi",
 }
 
 

@@ -110,6 +110,7 @@ class FeatureHealthTests(unittest.TestCase):
         self.assertIn("download_control", data)
         self.assertIn("steam_cart", data)
         self.assertIn("steam_wishlist", data)
+        self.assertIn("steam_favorites", data)
 
     def test_wishlist_auth_error_classifies_as_wishlist_rejected(self):
         with TemporaryDirectory() as temp_dir:

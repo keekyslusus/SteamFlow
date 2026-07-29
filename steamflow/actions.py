@@ -17,16 +17,23 @@ from .os_integration import (
     STEAM_STORE_SPECIALS_URL,
     STEAM_STORE_TOP_SELLERS_URL,
     build_steam_discussions_uri,
+    build_steam_friend_game_uri,
+    build_steam_friend_join_game_uri,
+    build_steam_friend_message_uri,
     build_steam_game_properties_uri,
     build_steam_guides_uri,
     build_steam_install_uri,
+    build_steam_join_lobby_uri,
     build_steam_library_details_uri,
+    build_steam_profile_uri,
+    build_steam_profile_url,
     build_steam_refund_uri,
     build_steam_screenshots_uri,
     build_steam_store_uri,
     build_steam_store_url,
     build_steam_store_specials_uri,
     build_steam_store_top_sellers_uri,
+    build_steam_trade_offer_uri,
     build_steam_uninstall_uri,
     build_steam_wishlist_uri,
     build_steam_wishlist_url,
@@ -139,6 +146,102 @@ class SteamPluginActionsMixin:
         except Exception as error:
             self._log_action_error(f"Failed to open Steam friends: {error}")
             return self._action_message("steam_action.friends_failed", error=str(error))
+
+    def open_steam_friend_chat(self, steamid64):
+        steamid64 = str(steamid64 or "").strip()
+        if not steamid64:
+            return self._action_message("steam_action.friend_missing")
+        try:
+            open_uri(build_steam_friend_message_uri(steamid64))
+            return self._action_message("steam_action.friend_chat_opened")
+        except Exception as error:
+            self._log_action_error(f"Failed to open Steam chat for {steamid64}: {error}")
+            return self._action_message("steam_action.friend_chat_failed", error=str(error))
+
+    def open_steam_friend_profile(self, steamid64):
+        steamid64 = str(steamid64 or "").strip()
+        if not steamid64:
+            return self._action_message("steam_action.friend_missing")
+        try:
+            open_uri(build_steam_profile_uri(steamid64))
+            return self._action_message("steam_action.friend_profile_opened")
+        except Exception:
+            try:
+                open_web_url(build_steam_profile_url(steamid64))
+                return self._action_message("steam_action.friend_profile_browser_opened")
+            except Exception as error:
+                self._log_action_error(f"Failed to open Steam profile for {steamid64}: {error}")
+                return self._action_message("steam_action.friend_profile_failed", error=str(error))
+
+    def open_steam_friend_trade_offer(self, steamid64):
+        steamid64 = str(steamid64 or "").strip()
+        if not steamid64:
+            return self._action_message("steam_action.friend_missing")
+        try:
+            uri = build_steam_trade_offer_uri(steamid64)
+        except ValueError:
+            return self._action_message("steam_action.friend_invalid")
+        try:
+            open_uri(uri)
+            return self._action_message("steam_action.friend_trade_opened")
+        except Exception as error:
+            self._log_action_error(f"Failed to open Steam trade offer for {steamid64}: {error}")
+            return self._action_message("steam_action.friend_trade_failed", error=str(error))
+
+    def open_steam_friend_game(self, gameid):
+        gameid = str(gameid or "").strip()
+        if not gameid:
+            return self._action_message("steam_action.friend_game_missing")
+        try:
+            open_uri(build_steam_friend_game_uri(gameid))
+            return self._action_message("steam_action.friend_game_opened")
+        except Exception as error:
+            self._log_action_error(f"Failed to open Steam game {gameid}: {error}")
+            return self._action_message("steam_action.friend_game_failed", error=str(error))
+
+    def join_steam_friend_game(self, steamid64, app_id):
+        steamid64 = str(steamid64 or "").strip()
+        app_id = str(app_id or "").strip()
+        if not steamid64 or not app_id:
+            return self._action_message("steam_action.friend_join_missing")
+        get_candidates = getattr(self, "get_joinable_friends_for_app", None)
+        if not callable(get_candidates):
+            return self._action_message("steam_action.friend_join_unavailable")
+        candidates = get_candidates(
+            app_id,
+            only_steamid64=steamid64,
+            force_refresh=True,
+        )
+        candidate = next(
+            (
+                candidate
+                for candidate in candidates or ()
+                if (
+                    isinstance(candidate, dict)
+                    and str(candidate.get("steamid64", "") or "") == steamid64
+                )
+            ),
+            None,
+        )
+        if candidate is None:
+            return self._action_message("steam_action.friend_join_expired")
+        lobby_id = str(candidate.get("lobby_id", "") or "").strip()
+        try:
+            uri = (
+                build_steam_join_lobby_uri(app_id, lobby_id, steamid64)
+                if lobby_id
+                else build_steam_friend_join_game_uri(steamid64)
+            )
+            open_uri(uri)
+            return self._action_message("steam_action.friend_join_opened")
+        except Exception as error:
+            self._log_action_error(
+                f"Failed to join Steam friend game for {steamid64}: {error}"
+            )
+            return self._action_message(
+                "steam_action.friend_join_failed",
+                error=str(error),
+            )
 
     def set_steam_friends_status(self, status):
         normalized_status = str(status or "").strip().lower()

@@ -27,6 +27,25 @@ class UtilSteamDateTests(unittest.TestCase):
         self.assertEqual(util_steam_date.format_relative_minutes_ago(24 * 60), "1d ago")
         self.assertEqual(util_steam_date.format_relative_minutes_ago(3 * 24 * 60), "3d ago")
 
+    def test_format_last_seen_is_precise_for_recent_activity_and_compact_when_old(self):
+        now = datetime(2026, 4, 19, 12, 0)
+
+        self.assertEqual(util_steam_date.format_last_seen(0, now=now), "")
+        self.assertEqual(
+            util_steam_date.format_last_seen(
+                datetime(2026, 4, 19, 9, 30).timestamp(),
+                now=now,
+            ),
+            "2h ago",
+        )
+        self.assertEqual(
+            util_steam_date.format_last_seen(
+                datetime(2026, 4, 5, 12, 0).timestamp(),
+                now=now,
+            ),
+            "Apr 5",
+        )
+
     def test_format_wishlisted_date_uses_today_and_yesterday_for_recent_dates(self):
         now = datetime(2026, 4, 19, 12, 0, 0)
 
@@ -44,28 +63,28 @@ class UtilSteamDateTests(unittest.TestCase):
         self.assertEqual(util_steam_date.format_wishlisted_date(1775383200, now=now), "Apr 5")
         self.assertEqual(util_steam_date.format_wishlisted_date(1712664000, now=now), "Apr 9, 2024")
 
-    def test_format_wishlisted_date_uses_localized_months(self):
+    def test_format_wishlisted_date_uses_english_for_disabled_locale(self):
         now = datetime(2026, 4, 19, 12, 0, 0)
 
         self.assertEqual(
             util_steam_date.format_wishlisted_date(1775383200, now=now, tr=Localizer("ru").tr),
-            "5 апр.",
+            "Apr 5",
         )
         self.assertEqual(
             util_steam_date.format_wishlisted_date(1712664000, now=now, tr=Localizer("ru").tr),
-            "9 апр. 2024",
+            "Apr 9, 2024",
         )
 
-    def test_format_last_played_date_uses_localized_date_format(self):
+    def test_format_last_played_date_uses_english_for_disabled_locale(self):
         now = datetime(2026, 4, 19, 12, 0, 0)
 
         self.assertEqual(
             util_steam_date.format_steam_last_played(1775383200, now=now, tr=Localizer("zh-Hans").tr),
-            "4月5日",
+            "Apr 5",
         )
         self.assertEqual(
             util_steam_date.format_steam_last_played(1712664000, now=now, tr=Localizer("zh-Hans").tr),
-            "2024年4月9日",
+            "Apr 9, 2024",
         )
 
 

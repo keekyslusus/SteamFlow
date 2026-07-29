@@ -22,6 +22,7 @@ from steamflow.wishlist_service import (
     get_wishlist_fetch_error_message,
     is_wishlist_cache_fresh,
     is_wishlist_worker_running,
+    mutate_wishlist_cache_file,
     normalize_wishlist_cache_payload,
     normalize_wishlist_items,
     parse_wishlist_payload,
@@ -187,6 +188,35 @@ class WishlistServiceTests(unittest.TestCase):
 
         removed = remove_wishlist_cache_item(added, "10")
         self.assertEqual([item["appid"] for item in removed], ["20"])
+
+    def test_cache_file_mutations_merge_with_latest_disk_state(self):
+        stale_snapshot = [{"appid": "10", "date_added": 100, "priority": 0}]
+        with TemporaryDirectory() as temp_dir:
+            cache_file = Path(temp_dir) / "cache_wishlist.json"
+
+            first_result = mutate_wishlist_cache_file(
+                cache_file,
+                "76561198000000000",
+                "20",
+                "add",
+                fallback_items=stale_snapshot,
+                now=200,
+            )
+            second_result = mutate_wishlist_cache_file(
+                cache_file,
+                "76561198000000000",
+                "30",
+                "add",
+                fallback_items=stale_snapshot,
+                now=300,
+            )
+            saved_cache = json.loads(cache_file.read_text(encoding="utf-8"))
+            lock_file_exists = Path(f"{cache_file}.mutation.lock").exists()
+
+        self.assertEqual([item["appid"] for item in first_result["items"]], ["10", "20"])
+        self.assertEqual([item["appid"] for item in second_result["items"]], ["10", "20", "30"])
+        self.assertEqual([item["appid"] for item in saved_cache["items"]], ["10", "20", "30"])
+        self.assertFalse(lock_file_exists)
 
     def test_build_wishlist_results_plan_splits_loaded_visible_and_missing_items(self):
         wishlist_items = [
