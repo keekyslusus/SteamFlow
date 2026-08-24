@@ -123,8 +123,10 @@
 
 ## Installation
 
-type `pm install SteamFlow by keekys` in Flow Launcher
+Type `pm install SteamFlow by keekys` in Flow Launcher
 
-## Use Google Keep?
 
-Try my plugin [GoogleKeepFlow](https://github.com/keekyslusus/GoogleKeepFlow)
+## Check out my other plugins
+
+- [GoogleKeepFlow](https://github.com/keekyslusus/GoogleKeepFlow)
+- [GrepFlow](https://github.com/keekyslusus/GrepFlow)
