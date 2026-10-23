@@ -1,35 +1,21 @@
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/readme_for_dark_theme.svg">
-    <source media="(prefers-color-scheme: light)" srcset=".github/readme_for_light_theme.svg">
-    <img alt="SteamFlow" src=".github/readme_for_light_theme.svg">
+    <source media="(prefers-color-scheme: dark)" srcset=".github/ico_for_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset=".github/ico_for_light.svg">
+    <img alt="CircleFlow" src=".github/ico_for_light.svg" width="10%">
   </picture>
 </div>
-<!--
+
 <p align="center">
-<img src="https://hatscripts.github.io/circle-flags/flags/uk.svg" width="24"/>
-<img src="https://hatscripts.github.io/circle-flags/flags/de.svg" width="24"/>
-<img src="https://hatscripts.github.io/circle-flags/flags/es.svg" width="24"/>
-<img src="https://hatscripts.github.io/circle-flags/flags/fr.svg" width="24"/>
-<img src="https://hatscripts.github.io/circle-flags/flags/jp.svg" width="24"/>
-<img src="https://hatscripts.github.io/circle-flags/flags/kr.svg" width="24"/>
-<img src="https://hatscripts.github.io/circle-flags/flags/pl.svg" width="24"/>
-<img src="https://hatscripts.github.io/circle-flags/flags/br.svg" width="24"/>
-<img src="https://hatscripts.github.io/circle-flags/flags/ru.svg" width="24"/>
-<img src="https://hatscripts.github.io/circle-flags/flags/cn.svg" width="24"/>
-<img src="https://hatscripts.github.io/circle-flags/flags/tw.svg" width="24"/>
-</p>
--->
-<p align="center">
-  <img src="https://img.shields.io/github/downloads/keekyslusus/SteamFlow/total?style=flat-square&color=black&labelColor=blue">
-  <img src="https://img.shields.io/github/stars/keekyslusus/SteamFlow?style=flat-square&color=black&labelColor=blue">
-  <img src="https://img.shields.io/github/last-commit/keekyslusus/SteamFlow?style=flat-square&color=black&labelColor=blue">
-  <img src="https://img.shields.io/github/v/release/keekyslusus/SteamFlow?style=flat-square&color=black&labelColor=blue">
+  <img src="https://img.shields.io/github/downloads/keekyslusus/SteamFlow/total?style=flat-square&color=black&labelColor=white">
+  <img src="https://img.shields.io/github/stars/keekyslusus/SteamFlow?style=flat-square&color=black&labelColor=white">
+  <img src="https://img.shields.io/github/last-commit/keekyslusus/SteamFlow?style=flat-square&color=black&labelColor=white">
+  <img src="https://img.shields.io/github/v/release/keekyslusus/SteamFlow?style=flat-square&color=black&labelColor=white">
 </p>
 
-## SteamFlow: steam plugin for [Flow Launcher](https://www.flowlauncher.com/)
+## SteamFlow: Steam plugin for [Flow Launcher](https://www.flowlauncher.com/)
 
-### Search Steam store and launch games and more
+### Search Steam store, launch games & more
 
 <img src=".github/peenar.gif" width="500">
 
@@ -50,8 +36,8 @@
 <img src=".github/localgames.png" width="500">
 
 - Launch installed games directly from Flow Launcher
-- Shows playtime, last played date, and achievement progress
-- Display game update status and control downloads (pause/resume updates)
+- Shows playtime, last played date & achievement progress
+- Display game update status & control downloads (pause/resume updates)
 - Sorted by most recently played
 
 
@@ -59,25 +45,24 @@
 <img src=".github/store.png" width="500">
 
 - Search the Steam store by game name
-- Shows review score, concurrent player count, price, and release date
+- Shows review score, concurrent player count, price & release date
 - Shows which friends are currently playing a game
-- Shows Steam Deck compatibility for active Deck users
-- Browse Steam top sellers (`steam top`) and specials (`steam deals`)
+- Browse Steam top sellers (`steam top`) & specials (`steam deals`)
 - Owned games opens directly in your library
 
 
 ### Wishlist
 <img src=".github/wishlist.png" width="500">
 
-- Browse and search your Steam wishlist
-- Shows current price, review score, and date added to wishlist
+- Browse & search your Steam wishlist
+- Shows current price, review score & date added to wishlist
 - Requires a Steam Web API key (`steam api` to configure)
 
 
 ### Friends
 <img src=".github/friends.png" width="500">
 
-- Browse and search friends (`steam friends`)
+- Browse & search friends (`steam friends`)
 - Pins Steam favorite friends to the top of the list
 - Context menu: open chat, profile, trade offer, game page, or join their game when available
 - Requires a Steam Web API key (`steam api` to configure)
@@ -86,38 +71,40 @@
 ### Smart context menu
 <img src=".github/contextmenu.png" width="500">
 
-- Open store page in Steam/[SteamDB](https://steamdb.info/)/[CS.RIN](https://cs.rin.ru/forum/viewforum.php?f=10)
-- Open Community Guides and Discussions
-- Open Recordings & Screenshots folder
-- Open game Properties
+- Open store page in Steam/[SteamDB](https://steamdb.info/)
+- Search game topics on [CS.RIN](https://cs.rin.ru/forum/viewforum.php?f=10) (off by default)
+- Show the [ProtonDB](https://www.protondb.com/) rating for Linux/Steam Deck (off by default)
+- Open community guides & discussions
+- Open recordings & screenshots folder
+- Open game properties
 - Browse local game files
 - Check refund eligibility
 - Add games to Steam shopping cart
 - Add/remove games from Steam wishlist
 - Join a friend currently playing the game
 - [SmokeAPI](https://github.com/acidicoala/SmokeAPI)(experimental, off by default, may break games)
-- Install/Uninstall game
+- Install/uninstall game
 
 
 ### Steam status
 <img src=".github/status.png" width="500">
 
-- Switch to Online, Invisible, or Offline in one click
+- Switch to online/invisible/offline in one click
 
 
 ### Account switcher
 <img src=".github/switch.png" width="500">
 
-- Switch between Steam accounts signed in on this PC and restart Steam instantly
+- Switch between Steam accounts signed in on this PC & restart Steam instantly
 
 
 ### Steam Web API
 
-> API key is encrypted and bound to active Steam account
+> API key is encrypted & bound to active Steam account
 
 - Detects owned games from store search
 - Enables wishlist browsing
-- Enables friend list, favorites and join-game actions
+- Enables friend list, favorites & join-game actions
 - Shows your active profile status
 
 

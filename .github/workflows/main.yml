@@ -2,31 +2,27 @@
 
 name: 'Build & Release Plugin'
 
+# Releases are cut by hand: Actions -> Build & Release Plugin -> Run workflow.
 on:
   workflow_dispatch:
-
-  push:
-    branches: [ main ]
-    paths-ignore:
-      - '.github/workflows/*'
 
 jobs:
   build:
     runs-on: windows-latest
-    
+
     permissions:
       contents: write
 
     env:
-      python_ver: 3.11
+      dotnet_ver: 9.0.x
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
-    - name: Set up Python ${{ env.python_ver }}
-      uses: actions/setup-python@v4
+    - name: Set up .NET ${{ env.dotnet_ver }}
+      uses: actions/setup-dotnet@v4
       with:
-        python-version: ${{ env.python_ver }}
+        dotnet-version: ${{ env.dotnet_ver }}
 
     - name: Get plugin version from plugin.json
       id: version
@@ -35,27 +31,37 @@ jobs:
         path: 'plugin.json'
         prop_path: 'Version'
 
-    - name: Install dependencies into lib folder
+    # A published version is never replaced: users who already installed it would keep a different build.
+    - name: Stop if this version is already released
       shell: pwsh
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG: v${{ steps.version.outputs.prop }}
       run: |
-        python -m pip install --upgrade pip
-        if (Test-Path .\lib) {
-          Remove-Item .\lib -Recurse -Force
+        gh release view $env:TAG --repo $env:GITHUB_REPOSITORY *> $null
+        $releaseExists = $LASTEXITCODE -eq 0
+        $tagExists = [bool](git ls-remote --tags origin "refs/tags/$env:TAG")
+        if ($releaseExists -or $tagExists) {
+          Write-Error "$env:TAG is already released. Raise Version in plugin.json and run the workflow again."
+          exit 1
         }
-        # Install Windows runtime dependencies into the ./lib directory
-        pip install pyflowlauncher==0.10.0 vdf urllib3 certifi pillow==12.1.0 -t .\lib
+        exit 0
+
+    - name: Test
+      run: dotnet test tests/SteamFlow.Tests -c Release
+
+    - name: Build
+      run: dotnet build src/SteamFlow/SteamFlow.csproj -c Release
 
     - name: Create release zip
       shell: pwsh
       run: |
+        $output = 'src/SteamFlow/bin/Release'
         $staging = Join-Path $PWD '.release'
         if (Test-Path $staging) {
           Remove-Item $staging -Recurse -Force
         }
-        New-Item -ItemType Directory -Path $staging | Out-Null
-        Get-ChildItem -Force | Where-Object { $_.Name -notin '.git', '.github', '.release', 'tests' } | ForEach-Object {
-          Copy-Item -LiteralPath $_.FullName -Destination $staging -Recurse -Force
-        }
+        Copy-Item $output $staging -Recurse -Exclude '*.pdb'
         $zipPath = Join-Path $PWD 'Flow.Launcher.Plugin.SteamFlow.zip'
         if (Test-Path $zipPath) {
           Remove-Item $zipPath -Force
@@ -68,7 +74,9 @@ jobs:
       with:
         # The zip file to upload
         files: 'Flow.Launcher.Plugin.SteamFlow.zip'
-        # The release will be tagged with "v" + the version from plugin.json (e.g., v1.0.0)
+        # The release will be tagged with "v" + the version from plugin.json (e.g., v3.0.0)
         tag_name: "v${{steps.version.outputs.prop}}"
+        # The tag goes on the commit that was built, even when the workflow runs on another branch.
+        target_commitish: ${{ github.sha }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

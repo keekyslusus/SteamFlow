@@ -2,11 +2,11 @@
   "ID": "A7F3C4E16B8D4B5AB2D7139EEC8FA0B4",
   "ActionKeyword": "steam",
   "Name": "SteamFlow",
-  "Description": "Launch Steam games and search Steam store",
+  "Description": "Control Steam from Flow Launcher. Switch accounts, manage status, browse wishlist, search the store and more",
   "Author": "keekys",
-  "Version": "2.2.0",
-  "Language": "python",
+  "Version": "3.0.0",
+  "Language": "csharp",
   "Website": "https://github.com/keekyslusus/SteamFlow",
-  "IcoPath": "icons/steam.png",
-  "ExecuteFileName": "main.py"
+  "IcoPath": "Images/steam.png",
+  "ExecuteFileName": "Flow.Launcher.Plugin.SteamFlow.dll"
 }

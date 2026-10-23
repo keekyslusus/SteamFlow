@@ -10,4 +10,3 @@
 | Fill | Off |
 | Weight | 400 |
 | Grade | 0 |
-| Size | 48px |

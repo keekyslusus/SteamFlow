@@ -26,12 +26,16 @@ assignees: ''
 
 ## Logs
 
-Please attach the following log files from the plugin directory:
+Press Win+R, paste the path below and press Enter to open the log folder:
 
-- `plugin_steamflow.log`
-- `steam_switch_worker.log`
-- `steam_wishlist_worker.log`
-- Any other relevant log files
+```
+%APPDATA%\FlowLauncher\Cache\Plugins\Flow.Launcher.Plugin.SteamFlow
+```
+
+Drag `steamflow.log` (and `steamflow.old.log`, if it exists) into this issue.
+
+<!-- Portable Flow Launcher keeps the folder next to Flow instead: <Flow folder>\app-<version>\UserData\Cache\Plugins\Flow.Launcher.Plugin.SteamFlow -->
+
 
 ## Environment
 

@@ -1,56 +1,18 @@
 # Repository Guidelines
 
-- `SteamPlugin` is the main plugin shell.
-- Mixins provide Flow Launcher-facing behavior and public plugin methods.
-- `providers.py` is the dependency boundary between feature areas.
-- `state.py` owns grouped plugin state.
-- Service modules contain reusable business logic.
+- Keep `Main.cs` as a thin Flow Launcher entry point: it implements the Flow interfaces and delegates to services.
+- Assemble the runtime dependency graph only in `CompositionRoot.cs`.
+- Prefer composition and constructor injection. Do not introduce implementation inheritance, abstract base classes, class hierarchies or service locators.
+- Give each class one cohesive responsibility; keep feature-specific behavior and resource ownership inside that feature's folder (e.g. `Library/`).
+- Keep features loosely coupled: replacing or removing one should mainly affect its own code and composition, not unrelated features.
+- Centralize shared behavior and policy in focused services (e.g. opening Steam URIs and pages in `Steam/SteamClient.cs`); avoid duplication and abstractions that do not reduce coupling.
+- Apply these principles (1. one cohesive responsibility, 2. keep features loosely coupled, 3. centralize shared behavior) proportionately: prefer the simplest design that makes current changes clear; do not add layers or interfaces solely for hypothetical future replacements.
+- No XML docs (`/// <summary>`) and no comments that restate the code; comment only non-obvious why.
+- Put all user-visible strings in `src/SteamFlow/Languages/*.xaml` and read them with `IPublicAPI.GetTranslation`; do not hardcode them in C#.
+- Do not use em dashes (U+2014); use hyphens (-) instead.
 
+## Build
 
-## Mixin Rules
-
-Treat existing mixins as a legacy shell around the plugin.
-
-Mixins are okay when they:
-
-- expose plugin methods required by Flow Launcher;
-- coordinate a feature at a high level;
-- adapt providers/state/services into plugin behavior;
-- stay thin enough to understand locally.
-
-Avoid adding new large mixins. If a feature needs substantial logic, put that logic in a normal module or small service first, then call it from a thin mixin method.
-
-
-## Service Module Rules
-
-Prefer plain modules or small service helpers for new business logic.
-Keep service modules boring and explicit. Do not introduce a large dependency injection framework or a component graph just to avoid mixins.
-
-
-## Provider Rules
-
-Keep using providers as the dependency boundary.
-
-Feature code should prefer provider calls over reaching across the whole plugin surface when practical.
-
-Declare provider requirements with `REQUIRED_PLUGIN_PROVIDERS` when a mixin depends on provider access. Declare direct plugin requirements with `REQUIRED_PLUGIN_ATTRS` and `REQUIRED_PLUGIN_METHODS` when the dependency really must remain on the plugin object.
-
-
-## State Rules
-
-Keep plugin state grouped in dataclasses under `state.py`.
-
-Avoid adding random new mutable attributes directly to the plugin when they belong to an existing state group. If a new state area grows large, add a dedicated state dataclass instead of scattering attributes.
-
-
-## Localization Rules
-
-Do not hardcode user-visible text in code; put it in `steamflow/locales/` and access it through the localization helpers.
-
-
-## Target
-
-- mixins stay as plugin-facing adapters;
-- providers describe cross-feature dependencies;
-- service modules hold most feature logic;
-- state remains explicit and grouped;
+- Target `net9.0-windows` to match Flow Launcher 2.x; check a dependency's target framework before adding it.
+- `scripts/deploy-dev.ps1` builds the plugin, restarts Flow Launcher and installs the build into its plugins folder under a dev ID, the `stc` keyword and the name "SteamFlow (dev)", so it runs next to the installed release.
+- The root `plugin.json` is the release manifest (original ID, `steam` keyword); the release workflow reads its version.
