@@ -4,7 +4,7 @@
   "Name": "SteamFlow",
   "Description": "Control Steam from Flow Launcher. Switch accounts, manage status, browse wishlist, search the store and more",
   "Author": "keekys",
-  "Version": "3.0.0",
+  "Version": "3.0.1",
   "Language": "csharp",
   "Website": "https://github.com/keekyslusus/SteamFlow",
   "IcoPath": "Images/steam.png",

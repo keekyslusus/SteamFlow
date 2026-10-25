@@ -14,7 +14,7 @@ public sealed record AppDetails(
 
 public sealed record StorePrice(string Final, int DiscountPercent);
 
-public sealed record ReviewSummary(int TotalPositive, int TotalReviews);
+public sealed record ReviewSummary(int PercentPositive, int ReviewCount);
 
 public sealed record PlayerCount(int Value);
 

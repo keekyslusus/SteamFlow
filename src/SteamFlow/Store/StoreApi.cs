@@ -41,9 +41,20 @@ public sealed class StoreApi(HttpClient http)
         return response.IsSuccessStatusCode ? await response.Content.ReadAsByteArrayAsync(token) : null;
     }
 
-    public async Task<ReviewSummary?> ReviewsAsync(int appId, CancellationToken token) =>
-        ParseReviews(await http.GetStringAsync(
-            $"{StoreUrl}/appreviews/{appId}?json=1&language=all&purchase_type=all&num_per_page=0", token));
+    // store.steampowered.com/appreviews now redirects to the store front page, so the summary comes from the Web API.
+    // GetItems needs a country code and hides apps that are not sold there, but the summary is the same everywhere,
+    // so a fixed region keeps region-locked games (e.g. owned ones no longer sold locally) from losing their reviews.
+    public async Task<ReviewSummary?> ReviewsAsync(int appId, CancellationToken token)
+    {
+        var input = JsonSerializer.Serialize(new
+        {
+            ids = new[] { new { appid = appId } },
+            context = new { country_code = "US" },
+            data_request = new { include_reviews = true },
+        });
+        return ParseReviews(await http.GetStringAsync(
+            $"{WebApiUrl}/IStoreBrowseService/GetItems/v1/?input_json={Uri.EscapeDataString(input)}", token));
+    }
 
     public async Task<PlayerCount?> CurrentPlayersAsync(int appId, CancellationToken token) =>
         ParsePlayers(await http.GetStringAsync(
@@ -174,15 +185,21 @@ public sealed class StoreApi(HttpClient http)
         return prices;
     }
 
+    // summary_filtered covers every language and leaves out off-topic review bombs, like the score on the store page.
     public static ReviewSummary? ParseReviews(string json)
     {
         using var document = JsonDocument.Parse(json);
-        if (!document.RootElement.TryGetProperty("query_summary", out var summary))
+        if (!document.RootElement.TryGetProperty("response", out var response)
+            || !response.TryGetProperty("store_items", out var items)
+            || items.ValueKind != JsonValueKind.Array
+            || items.GetArrayLength() == 0
+            || !items[0].TryGetProperty("reviews", out var reviews)
+            || !reviews.TryGetProperty("summary_filtered", out var summary))
         {
             return null;
         }
 
-        return new ReviewSummary(Int(summary, "total_positive") ?? 0, Int(summary, "total_reviews") ?? 0);
+        return new ReviewSummary(Int(summary, "percent_positive") ?? 0, Int(summary, "review_count") ?? 0);
     }
 
     public static PlayerCount? ParsePlayers(string json)

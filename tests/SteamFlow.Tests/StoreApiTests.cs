@@ -85,10 +85,16 @@ public class StoreApiTests
     }
 
     [Fact]
-    public void Reviews_ReadQuerySummary() =>
+    public void Reviews_ReadFilteredSummary() =>
         Assert.Equal(
-            new ReviewSummary(85643, 90079),
-            StoreApi.ParseReviews("""{"success":1,"query_summary":{"review_score_desc":"Overwhelmingly Positive","total_positive":85643,"total_reviews":90079}}"""));
+            new ReviewSummary(88, 115890),
+            StoreApi.ParseReviews(
+                """{"response":{"store_items":[{"appid":524220,"success":1,"reviews":{"summary_filtered":{"review_count":115890,"percent_positive":88,"review_score":8},"summary_language_specific":{"review_count":50749,"percent_positive":90,"review_score":8}}}]}}"""));
+
+    [Theory]
+    [InlineData("""{"response":{}}""")]
+    [InlineData("""{"response":{"store_items":[{"appid":0,"success":15}]}}""")]
+    public void Reviews_MissingSummaryIsNull(string json) => Assert.Null(StoreApi.ParseReviews(json));
 
     [Fact]
     public void Players_RequireSuccessfulResult()

@@ -14,7 +14,7 @@ public class StoreSubtitlesTests
     [Fact]
     public void Build_JoinsReviewsPlayersPriceAndRelease()
     {
-        var data = new StoreItemData(Gungeon, Released, new StorePrice("820₸", 80), new ReviewSummary(85643, 90079), new PlayerCount(1683));
+        var data = new StoreItemData(Gungeon, Released, new StorePrice("820₸", 80), new ReviewSummary(95, 90079), new PlayerCount(1683));
 
         Assert.Equal(
             "Open in Store | 👍 95% | 🌐 1,683 | 820₸ -80% | 5 Apr, 2016",
@@ -34,7 +34,7 @@ public class StoreSubtitlesTests
     [Fact]
     public void Build_HidesMetricsForDlcAndUnreleasedGames()
     {
-        var reviews = new ReviewSummary(9, 10);
+        var reviews = new ReviewSummary(90, 10);
         var dlc = new StoreItemData(Gungeon with { Name = "Gungeon Soundtrack" }, null, null, reviews, new PlayerCount(5));
         var upcoming = new StoreItemData(Gungeon, Released with { ComingSoon = true, ReleaseDate = "" }, null, reviews, new PlayerCount(5));
 
@@ -46,20 +46,18 @@ public class StoreSubtitlesTests
     public void Build_RespectsSettings()
     {
         var settings = new PluginSettings { ShowPrices = false, ShowPlayerCount = false, ShowPositiveReviews = false };
-        var data = new StoreItemData(Gungeon, Released with { ReleaseDate = "" }, new StorePrice("820₸", 0), new ReviewSummary(9, 10), new PlayerCount(5));
+        var data = new StoreItemData(Gungeon, Released with { ReleaseDate = "" }, new StorePrice("820₸", 0), new ReviewSummary(90, 10), new PlayerCount(5));
 
         Assert.Equal("Open in Store", Subtitles(settings).Build(data));
     }
 
     [Theory]
-    [InlineData(1, 2, "👍 50%")]
-    [InlineData(5, 8, "👍 62%")]
-    [InlineData(7, 8, "👍 88%")]
-    [InlineData(400, 1000, "👍 40%")]
-    [InlineData(396, 1000, "👎 40%")]
-    [InlineData(32, 100, "👎 32%")]
-    public void Reviews_RoundAndTurnNegativeBelowFortyPercent(int positive, int total, string expected) =>
-        Assert.Equal(expected, Subtitles(new PluginSettings()).FormatReviews(new ReviewSummary(positive, total)));
+    [InlineData(88, "👍 88%")]
+    [InlineData(40, "👍 40%")]
+    [InlineData(39, "👎 39%")]
+    [InlineData(0, "👎 0%")]
+    public void Reviews_TurnNegativeBelowFortyPercent(int percent, string expected) =>
+        Assert.Equal(expected, Subtitles(new PluginSettings()).FormatReviews(new ReviewSummary(percent, 100)));
 
     [Theory]
     [InlineData(null, "game", false, RefundState.Unclear)]

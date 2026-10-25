@@ -35,7 +35,7 @@ public sealed class StoreSubtitles(Translator text, PluginSettings settings)
         var subtitle = new StringBuilder(text.Get(data.IsOwned ? "steamflow_store_subtitle_owned" : "steamflow_store_subtitle"));
 
         var live = SupportsLiveMetrics(data.Item, data.Details);
-        if (live && settings.ShowPositiveReviews && data.Reviews is { TotalReviews: > 0 } reviews)
+        if (live && settings.ShowPositiveReviews && data.Reviews is { ReviewCount: > 0 } reviews)
         {
             subtitle.Append(Separator).Append(FormatReviews(reviews));
         }
@@ -80,13 +80,11 @@ public sealed class StoreSubtitles(Translator text, PluginSettings settings)
         && item.Name.Length > 0
         && !NonGameNamePatterns.Any(pattern => item.Name.Contains(pattern, StringComparison.OrdinalIgnoreCase));
 
-    public string FormatReviews(ReviewSummary reviews)
-    {
-        var ratio = reviews.TotalPositive * 100.0 / reviews.TotalReviews;
-        var percent = (int)Math.Round(ratio, MidpointRounding.ToEven);
-        // Steam labels everything under 40% positive as Mostly Negative or worse; compare before rounding so 39.6% is not shown as positive.
-        return text.Format(ratio < 40 ? "steamflow_store_reviews_negative" : "steamflow_store_reviews_positive", percent);
-    }
+    // Steam labels everything under 40% positive as Mostly Negative or worse.
+    public string FormatReviews(ReviewSummary reviews) =>
+        text.Format(
+            reviews.PercentPositive < 40 ? "steamflow_store_reviews_negative" : "steamflow_store_reviews_positive",
+            reviews.PercentPositive);
 
     private string? FormatPrice(StoreItemData data)
     {
