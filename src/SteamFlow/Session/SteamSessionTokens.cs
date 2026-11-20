@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using System.Text.Json;
@@ -21,6 +22,7 @@ public sealed partial class SteamSessionTokens(string folder, string legacyFolde
     private const string TokenFolder = "download_control_tokens";
     private const int ChunkSize = 1024 * 1024;
     private const int ChunkOverlap = 8192;
+    private const int MaxInflatedSize = 16 * 1024 * 1024;
 
     // Same entropy and layout as the Python plugin, so a token it saved can be reused after the switch.
     private static readonly byte[] Entropy = "SteamFlow-DownloadControl-v1"u8.ToArray();
@@ -261,29 +263,78 @@ public sealed partial class SteamSessionTokens(string folder, string legacyFolde
         return SelectBest(files.SelectMany(file => ScanFile(file.FullName)), steamId64);
     }
 
-    // Cache entries are binary; Latin-1 keeps every byte so the ASCII token text survives the decoding.
-    private static IEnumerable<string> ScanFile(string path)
+    private static List<string> ScanFile(string path)
     {
         var found = new List<string>();
         try
         {
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            var buffer = new byte[ChunkSize + ChunkOverlap];
-            var carried = 0;
-            int read;
-            while ((read = stream.Read(buffer, carried, ChunkSize)) > 0)
-            {
-                var length = carried + read;
-                found.AddRange(ExtractTokens(Encoding.Latin1.GetString(buffer, 0, length)));
-                carried = Math.Min(ChunkOverlap, length);
-                Array.Copy(buffer, length - carried, buffer, 0, carried);
-            }
+            ScanCacheData(stream, found);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
         }
 
         return found;
+    }
+
+    // Cache entries are binary; Latin-1 keeps every byte so the ASCII token text survives the decoding.
+    // Chromium stores bodies as received, and Steam serves its pages gzip-encoded, so the store pages that
+    // carry the token are only readable after inflating each gzip body found in the file.
+    public static void ScanCacheData(Stream stream, List<string> found)
+    {
+        var gzipStarts = new SortedSet<long>();
+        var buffer = new byte[ChunkSize + ChunkOverlap];
+        var carried = 0;
+        int read;
+        while ((read = stream.Read(buffer, carried, ChunkSize)) > 0)
+        {
+            var length = carried + read;
+            found.AddRange(ExtractTokens(Encoding.Latin1.GetString(buffer, 0, length)));
+            FindGzipStarts(buffer.AsSpan(0, length), stream.Position - length, gzipStarts);
+            carried = Math.Min(ChunkOverlap, length);
+            Array.Copy(buffer, length - carried, buffer, 0, carried);
+        }
+
+        foreach (var start in gzipStarts)
+        {
+            stream.Position = start;
+            found.AddRange(ExtractTokens(Inflate(stream)));
+        }
+    }
+
+    private static void FindGzipStarts(ReadOnlySpan<byte> data, long offset, SortedSet<long> starts)
+    {
+        ReadOnlySpan<byte> magic = [0x1f, 0x8b, 0x08];
+        var index = 0;
+        int next;
+        while ((next = data[index..].IndexOf(magic)) >= 0)
+        {
+            starts.Add(offset + index + next);
+            index += next + 1;
+        }
+    }
+
+    // Block files pack entries back to back, so a body is followed by unrelated bytes; reading stops at the
+    // first invalid data and keeps what was already inflated.
+    private static string Inflate(Stream stream)
+    {
+        using var output = new MemoryStream();
+        try
+        {
+            using var gzip = new GZipStream(stream, CompressionMode.Decompress, leaveOpen: true);
+            var buffer = new byte[81920];
+            int read;
+            while (output.Length < MaxInflatedSize && (read = gzip.Read(buffer)) > 0)
+            {
+                output.Write(buffer, 0, read);
+            }
+        }
+        catch (InvalidDataException)
+        {
+        }
+
+        return Encoding.Latin1.GetString(output.GetBuffer(), 0, (int)output.Length);
     }
 
     private SessionToken? LoadSaved(ulong steamId64)

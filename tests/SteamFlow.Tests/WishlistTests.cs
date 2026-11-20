@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text;
 using SteamFlow.Localization;
 using SteamFlow.Session;
@@ -74,6 +75,28 @@ public class WishlistTests
             """;
 
         Assert.Equal(["a.b.c", "d.e.f", "g.h.i", "j-1.k_2.l3"], SteamSessionTokens.ExtractTokens(page));
+    }
+
+    [Fact]
+    public void ScanCacheData_FindsTokensInPlainAndGzipBodies()
+    {
+        using var compressed = new MemoryStream();
+        using (var gzip = new GZipStream(compressed, CompressionLevel.Optimal, leaveOpen: true))
+        {
+            gzip.Write(Encoding.UTF8.GetBytes("<div data-store_user_config=\"{&quot;webapi_token&quot;:&quot;d.e.f&quot;}\">"));
+        }
+
+        using var cache = new MemoryStream();
+        cache.Write([0x00, 0x1f, 0x8b, 0x08, 0xff, 0x13]);
+        cache.Write(Encoding.UTF8.GetBytes("{\"webapi_token\":\"a.b.c\"}"));
+        cache.Write(compressed.ToArray());
+        cache.Write([0x1f, 0x8b, 0x08, 0x00, 0x42, 0x42]);
+        cache.Position = 0;
+        var found = new List<string>();
+
+        SteamSessionTokens.ScanCacheData(cache, found);
+
+        Assert.Equal(["a.b.c", "d.e.f"], found);
     }
 
     [Fact]
